@@ -94,7 +94,9 @@ This script automates the deployment and configuration of a custom fan control s
   <li>Revert the GRUB boot parameter changes.</li>
 </ul>
 <h2>Logging</h2>
-<p>All events during deployment are logged to <code>/var/log/thinkfan-extreme.log</code>. Check this file for troubleshooting or to verify successful configuration.</p>
+<p>All events during deployment are logged to <code>/var/log/thinkfan-extreme.log</code>. Check this file for troubleshooting or to verify successful configuration. To continuously monitor the log, use:</p>
+<pre><code>tail -f /var/log/thinkfan-extreme.log</code></pre>
+
 <h2>Notes</h2>
 <ul>
   <li>
@@ -104,6 +106,7 @@ This script automates the deployment and configuration of a custom fan control s
     <strong>Fan Control Verification:</strong> After configuration, the script displays current fan settings from <code>/proc/acpi/ibm/fan</code>.
   </li>
 </ul>
+
 <h2>License</h2>
 <p>This project is licensed under the MIT License.</p>
 <h2>Author</h2>
