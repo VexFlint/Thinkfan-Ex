@@ -37,7 +37,7 @@ This script automates the deployment and configuration of a custom fan control s
   <li><strong>Custom Fan Control Script:</strong> Installs <code>thinkfan-ex</code> which:
     <ul>
       <li>Dynamically reads temperature sensor files.</li>
-      <li>Maps temperatures to discrete fan levels (0, 3, 5, and 7, or “level disengaged” for critical temperatures).</li>
+      <li>Maps temperatures to discrete fan levels (0 to 7, or “level disengaged” for critical temperatures).</li>
       <li>Supports command-line options:
         <ul>
           <li><code>-status</code>: Displays current fan status and sensor temperature readings.</li>
