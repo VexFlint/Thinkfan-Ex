@@ -21,7 +21,7 @@ This script automates the deployment and configuration of a custom fan control s
 <h2>Installation</h2>
 <ol>
   <li>
-    <strong>Download the Script:</strong> Save the deployment script (for example, as <code>/usr/local/bin/thinkfan-extreme.sh</code>).
+    <strong>Download the Script:</strong> Save the deployment script (for example, as <code>/home/$USER/Downloads/thinkfan-extreme.sh</code>).
   </li>
   <li>
     <strong>Make It Executable:</strong>
