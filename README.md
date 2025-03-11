@@ -35,6 +35,38 @@ This script automates the deployment and configuration of a custom fan control s
     <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
   </li>
 </ol>
+<pre><font color="#06989A"># Exemple of how to set up your config file</font>
+
+<font color="#06989A"># Critical temperature in millidegrees Celsius (75000 = 75°C)</font>
+<font color="#06989A">#CRITICAL_TEMP=75000</font>
+
+<font color="#06989A"># Temperature thresholds for each fan level (in millidegrees Celsius).</font>
+<font color="#06989A">#declare -A level_threshold</font>
+<font color="#06989A">#level_threshold[0]=40000</font>
+<font color="#06989A">#level_threshold[1]=45000</font>
+<font color="#06989A">#level_threshold[2]=50000</font>
+<font color="#06989A">#level_threshold[3]=55000</font>
+<font color="#06989A">#level_threshold[4]=60000</font>
+<font color="#06989A">#level_threshold[5]=65000</font>
+<font color="#06989A">#level_threshold[6]=70000</font>
+<font color="#06989A">#level_threshold[7]=75000</font>
+
+
+
+<font color="#06989A"># Critical temperature in millidegrees Celsius (60000 = 60°C)</font>
+CRITICAL_TEMP=76000
+
+<font color="#06989A"># Temperature thresholds for each fan level (in millidegrees Celsius).</font>
+declare -A level_threshold
+level_threshold[0]=40000
+level_threshold[1]=45000
+level_threshold[2]=50000
+level_threshold[3]=55000
+level_threshold[5]=65000
+level_threshold[6]=70000
+level_threshold[7]=76000
+
+</pre>
 <h1>Thinkfan-Extreme Deep Dive</h1>
 <p>This Bash script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It ensures proper ACPI settings and installs a custom fan control script (<code>thinkfan-ex</code>), a systemd service unit, and bash completion for enhanced command-line usability.</p>
 <h2>Features</h2>
