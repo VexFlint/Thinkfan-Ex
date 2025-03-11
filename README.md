@@ -18,14 +18,23 @@ This script automates the deployment and configuration of a custom fan control s
 - **Systemd Service Unit & Bash Completion:** Creates and enables a systemd service (`thinkfan-extreme.service`) and installs bash completion for ease of use.
 - **Logging:** Detailed logs are written to `/var/log/thinkfan-extreme.log`.
 
-**Installation Steps:**
-
-1. **Download the Script:**  
-   Save the deployment script (e.g., as `/home/$USER/Downloads/thinkfan-extreme.sh`).
-
-2. **Make It Executable:**  
-   ```bash
-   chmod +x /home/$USER/Downloads/thinkfan-extreme.sh
+<h2>Installation</h2>
+<ol>
+  <li>
+    <strong>Download the Script:</strong> Save the deployment script (for example, as <code>/usr/local/bin/thinkfan-extreme.sh</code>).
+  </li>
+  <li>
+    <strong>Make It Executable:</strong>
+    <pre><code>sudo chmod +x /usr/local/bin/thinkfan-extreme.sh</code></pre>
+  </li>
+  <li>
+    <strong>Run the Script as Root:</strong>
+    <pre><code>sudo /usr/local/bin/thinkfan-extreme.sh</code></pre>
+  </li>
+  <li>
+    <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
+  </li>
+</ol>
 <h1>Thinkfan-Extreme Deep Dive</h1>
 <p>This Bash script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It ensures proper ACPI settings and installs a custom fan control script (<code>thinkfan-ex</code>), a systemd service unit, and bash completion for enhanced command-line usability.</p>
 <h2>Features</h2>
@@ -58,23 +67,6 @@ This script automates the deployment and configuration of a custom fan control s
   <li><strong>Root Access:</strong> Both the deployment script and the installed components require root privileges.</li>
   <li><strong>GRUB Update:</strong> Kernel boot parameter changes will need a reboot to take effect.</li>
 </ul>
-<h2>Installation</h2>
-<ol>
-  <li>
-    <strong>Download the Script:</strong> Save the deployment script (for example, as <code>/usr/local/bin/thinkfan-extreme.sh</code>).
-  </li>
-  <li>
-    <strong>Make It Executable:</strong>
-    <pre><code>sudo chmod +x /usr/local/bin/thinkfan-extreme.sh</code></pre>
-  </li>
-  <li>
-    <strong>Run the Script as Root:</strong>
-    <pre><code>sudo /usr/local/bin/thinkfan-extreme.sh</code></pre>
-  </li>
-  <li>
-    <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
-  </li>
-</ol>
 <h2>Usage</h2>
 <p>Once installed, the custom fan control script (<code>thinkfan-ex</code>) will run as a service at boot. It continuously monitors temperature sensors and adjusts fan speeds accordingly.</p>
 <h3>Command-Line Options for <code>thinkfan-ex</code></h3>
