@@ -25,11 +25,11 @@ This script automates the deployment and configuration of a custom fan control s
   </li>
   <li>
     <strong>Make It Executable:</strong>
-    <pre><code>sudo chmod +x /usr/local/bin/thinkfan-extreme.sh</code></pre>
+    <pre><code>sudo chmod +x /home/$USER/Downloads/thinkfan-extreme.sh</code></pre>
   </li>
   <li>
     <strong>Run the Script as Root:</strong>
-    <pre><code>sudo /usr/local/bin/thinkfan-extreme.sh</code></pre>
+    <pre><code>sudo /home/$USER/Downloads/thinkfan-extreme.sh</code></pre>
   </li>
   <li>
     <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
