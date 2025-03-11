@@ -54,7 +54,7 @@ This script automates the deployment and configuration of a custom fan control s
 
 
 
-<font color="#06989A"># Critical temperature in millidegrees Celsius (60000 = 60°C)</font>
+<font color="#06989A"># Critical temperature in millidegrees Celsius (76000 = 76°C)</font>
 CRITICAL_TEMP=76000
 
 <font color="#06989A"># Temperature thresholds for each fan level (in millidegrees Celsius).</font>
