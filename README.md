@@ -35,6 +35,7 @@ This script automates the deployment and configuration of a custom fan control s
     <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
   </li>
 </ol>
+<h2>Exemple of config file<</h2>>
 <pre><font color="#06989A"># Exemple of how to set up your config file</font>
 
 <font color="#06989A"># Critical temperature in millidegrees Celsius (75000 = 75°C)</font>
