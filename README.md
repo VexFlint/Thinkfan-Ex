@@ -1,35 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Thinkfan-Extreme Deployment Script</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      line-height: 1.6;
-      margin: 20px;
-    }
-    code {
-      background: #f4f4f4;
-      padding: 2px 4px;
-      font-family: Consolas, monospace;
-    }
-    pre {
-      background: #f4f4f4;
-      padding: 10px;
-      overflow-x: auto;
-    }
-    h1, h2, h3, h4 {
-      margin-top: 1em;
-    }
-    ul {
-      margin-left: 20px;
-    }
-  </style>
-</head>
-<body>
-
-  <h1>Thinkfan-Extreme Deployment Script</h1>
+<h1>Thinkfan-Extreme Deployment Script</h1>
 
   <p>This Bash script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It ensures proper ACPI settings and installs a custom fan control script (<code>thinkfan-ex</code>), a systemd service unit, and bash completion for enhanced command-line usability.</p>
 
