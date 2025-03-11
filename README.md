@@ -21,11 +21,11 @@ This script automates the deployment and configuration of a custom fan control s
 **Installation Steps:**
 
 1. **Download the Script:**  
-   Save the deployment script (e.g., as `/usr/local/bin/thinkfan-extreme.sh`).
+   Save the deployment script (e.g., as `/home/$USER/Downloads/thinkfan-extreme.sh`).
 
 2. **Make It Executable:**  
    ```bash
-   sudo chmod +x /usr/local/bin/thinkfan-extreme.sh
+   chmod +x /home/$USER/Downloads/thinkfan-extreme.sh
 <h1>Thinkfan-Extreme Deep Dive</h1>
 <p>This Bash script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It ensures proper ACPI settings and installs a custom fan control script (<code>thinkfan-ex</code>), a systemd service unit, and bash completion for enhanced command-line usability.</p>
 <h2>Features</h2>
