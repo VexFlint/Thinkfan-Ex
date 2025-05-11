@@ -209,6 +209,16 @@ if [ "$#" -gt 0 ]; then
             done
             exit 0
             ;;
+        -config)
+            if [ ! -f "$CONFIG_FILE" ]; then
+                echo "$DEFAULT_CONFIG_CONTENT" > "$CONFIG_FILE"
+                chmod 644 "$CONFIG_FILE"
+                log_event "Created default config at $CONFIG_FILE"
+            fi
+            ${EDITOR:-nano} "$CONFIG_FILE"
+            exit 0
+            ;;
+
         -uninstall)
             # Ensure this branch is run as root.
             if [ "$EUID" -ne 0 ]; then
@@ -239,6 +249,7 @@ if [ "$#" -gt 0 ]; then
             echo "Usage: thinkfan-ex [option]"
             echo "Options:"
             echo "  -status   : Display current fan status and sensor temperature readings."
+            echo "  -config   : Create or edit the config file at \$CONFIG_FILE."
             echo "  -uninstall: Uninstall thinkfan-ex, disable its systemd service, revert GRUB changes, and remove bash completion."
             exit 0
             ;;
@@ -369,7 +380,7 @@ cat > "$COMPLETION_FILE" << 'EOF'
 _thinkfan_ex_completions() {
     local cur opts
     cur="${COMP_WORDS[COMP_CWORD]}"
-    opts="-status -uninstall -help"
+    opts="-status -config -uninstall -help"
     COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
     return 0
 }
