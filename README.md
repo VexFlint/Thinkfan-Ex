@@ -38,7 +38,8 @@ This script automates the deployment and configuration of a custom fan control s
 <h2>Example of config file</h2>
 <p>Defaults live in <code>/etc/thinkfan-extreme.conf</code>. Every temperature is in
 millidegrees Celsius (<code>70000</code> = 70&deg;C).</p>
-<pre><code># Critical temperature. Above this the fan goes to "level disengaged",
+```bash
+# Critical temperature. Above this the fan goes to "level disengaged",
 # which bypasses the EC's RPM ceiling and runs the fan flat out.
 # Set this as a genuine emergency rung, not a normal operating point:
 # compare it against your CPU's TjMax (usually 100C), not against idle temps.
@@ -58,7 +59,7 @@ level_threshold[4]=65000
 level_threshold[5]=70000
 level_threshold[6]=78000
 level_threshold[7]=85000
-</code></pre>
+```
 <p>Levels may be omitted &mdash; the ladder is built from whichever keys you define,
 so skipping <code>level_threshold[4]</code> simply means level 4 is never used.</p>
 
@@ -80,11 +81,12 @@ values make the fan quieter and lazier, but slower to wind down after a load end
 
 <h2>Tuning to your machine</h2>
 <p>The shipped defaults are a starting point, not a universal curve. To calibrate:</p>
-<pre><code>{ for z in /sys/class/thermal/thermal_zone*/; do echo "$z $(cat $z/type) $(cat $z/temp)"; done
+```bash
+{ for z in /sys/class/thermal/thermal_zone*/; do echo "$z $(cat $z/type) $(cat $z/temp)"; done
   cat /proc/acpi/ibm/fan
   grep MHz /proc/cpuinfo
-  sudo rdmsr 0x1b1; } 2>&amp;1 | tee ~/thermal-snapshot.txt
-</code></pre>
+  sudo rdmsr 0x1b1; } 2>&1 | tee ~/thermal-snapshot.txt
+```
 <p>Run it once at idle and again after several minutes at full load
 (<code>stress -c $(nproc)</code>), so the heatsink has saturated. Set the thresholds
 across the range between those two figures, and set <code>CRITICAL_TEMP</code>
