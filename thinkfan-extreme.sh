@@ -16,7 +16,7 @@
 # Requirements:
 #   - The thinkpad_acpi kernel module must be loaded with fan_control=1.
 #   - This script (and the installed thinkfan-ex script) must be run as root.
-# Version: 1.1
+# Version: 1.2
 # Author: Bruno Bellizzi Grande
 # Date: 2026-08-01
 
@@ -128,34 +128,25 @@ log_event() {
 CONFIG_FILE="/etc/thinkfan-extreme.conf"
 
 DEFAULT_CONFIG_CONTENT=$(cat <<'EOC'
-# Example of how to set up your config file
+# Thinkfan-Extreme configuration.
+# Every temperature is in millidegrees Celsius: 70000 is 70C.
+#
+# These defaults were measured on a repasted ThinkPad T480 (i7-8650U, TjMax 100,
+# ~74C at full load). They are a starting point. Run 'thinkfan-ex -check' and
+# then './fanbench.sh' to find what your own fan actually does before trusting
+# them -- see "Tuning to your machine" in the README.
 
-# Critical temperature in millidegrees Celsius (75000 = 75°C)
-#CRITICAL_TEMP=75000
+# Above this the fan goes to "disengaged", which leaves the EC's closed-loop
+# control and spins the fan as fast as it physically can. Treat it as an
+# emergency rung: set it well above your sustained load temperature but below
+# TjMax minus the TCC offset.
+CRITICAL_TEMP=88000
 
-# Temperature thresholds for each fan level (in millidegrees Celsius).
-#declare -A level_threshold
-#level_threshold[0]=40000
-#level_threshold[1]=45000
-#level_threshold[2]=50000
-#level_threshold[3]=55000
-#level_threshold[4]=60000
-#level_threshold[5]=65000
-#level_threshold[6]=70000
-#level_threshold[7]=75000
-
-
-
-# Critical temperature in millidegrees Celsius. TjMax on this CPU is 100C;
-# measured full-load package temp post-repaste is 74C, so disengaged is a
-# genuine emergency rung, not a normal operating point.
-CRITICAL_TEMP=90000
-
-# Downshift deadband in millidegrees. The fan holds its current level until the
-# smoothed temperature falls this far below that level's threshold. Make it
-# larger than your typical temperature swing, not merely equal to the gap
-# between thresholds.
-HYSTERESIS=8000
+# Downshift deadband. The fan holds its current level until the smoothed
+# temperature falls this far below that level's threshold. Make it larger than
+# your typical temperature swing, not merely equal to the gap between
+# thresholds.
+HYSTERESIS=6000
 
 # How many readings to average when deciding to step down. Raising this ignores
 # more jitter but reacts more slowly once a load ends. Upshifts always use the
@@ -167,16 +158,30 @@ SMOOTH_SAMPLES=5
 # or 0 to disable. Leave it on unless you have a reason not to.
 WATCHDOG_TIMEOUT=120
 
-# Temperature thresholds for each fan level (in millidegrees Celsius).
+# Temperature thresholds for each fan level.
+#
+# Levels you omit are simply never used. That matters, because most ThinkPads
+# have fewer real fan speeds than they have levels -- on the T480 these were
+# measured, and levels 0, 4 and 7 were dropped as duplicates or unusable:
+#
+#     level 0            0 RPM      fan off, never wanted while under load
+#     level 1         ~2500 RPM
+#     level 2         ~2700 RPM
+#     level 3         ~2950 RPM
+#     level 4         ~2985 RPM     same as 3, dropped
+#     level 5         ~3390 RPM
+#     level 6         ~3780 RPM
+#     level 7         ~3780 RPM     same as 6, dropped
+#     disengaged      ~4700 RPM     the only way past the EC's RPM ceiling
+#
+# Giving two thresholds to one physical speed just makes the fan change level
+# without changing sound. Measure yours, then keep one threshold per real speed.
 declare -A level_threshold
-level_threshold[0]=45000
-level_threshold[1]=50000
-level_threshold[2]=55000
-level_threshold[3]=60000
-level_threshold[4]=65000
-level_threshold[5]=70000
-level_threshold[6]=78000
-level_threshold[7]=85000
+level_threshold[1]=45000
+level_threshold[2]=52000
+level_threshold[3]=58000
+level_threshold[5]=65000
+level_threshold[6]=72000
 EOC
 )
 
@@ -188,18 +193,15 @@ fi
 CONFIG_SOURCE="built-in defaults (config file failed its syntax check)"
 if ! bash -n "$CONFIG_FILE" 2>/dev/null; then
     echo "Error: Configuration file $CONFIG_FILE has syntax errors. Falling back to default configuration." >&2
-    CRITICAL_TEMP=90000
-    HYSTERESIS=8000
+    CRITICAL_TEMP=88000
+    HYSTERESIS=6000
     SMOOTH_SAMPLES=5
     declare -A level_threshold
-    level_threshold[0]=45000
-    level_threshold[1]=50000
-    level_threshold[2]=55000
-    level_threshold[3]=60000
-    level_threshold[4]=65000
-    level_threshold[5]=70000
-    level_threshold[6]=78000
-    level_threshold[7]=85000
+    level_threshold[1]=45000
+    level_threshold[2]=52000
+    level_threshold[3]=58000
+    level_threshold[5]=65000
+    level_threshold[6]=72000
 else
     . "$CONFIG_FILE"
     CONFIG_SOURCE="$CONFIG_FILE"
@@ -222,9 +224,247 @@ for key in "${!level_threshold[@]}"; do
 done
 # --- End Debug Logging ---
 
+# Machine identity, used by both -check and -probe. Defined here so neither
+# branch depends on the other having run.
+model="unknown"
+[ -r /sys/class/dmi/id/product_version ] && model=$(cat /sys/class/dmi/id/product_version 2>/dev/null || echo unknown)
+model=${model:-unknown}
+
 # Command-line option handling.
 if [ "$#" -gt 0 ]; then
     case "$1" in
+        -check)
+            # Capability report. Never changes the fan state; safe at any time.
+            verdict=0
+            echo "Thinkfan-Ex compatibility check"
+            echo "==============================="
+            echo
+            echo "  Machine        : $model"
+            echo "  Kernel         : $(uname -r)"
+            echo
+
+            if lsmod 2>/dev/null | grep -q "^thinkpad_acpi"; then
+                echo "  [ok]   thinkpad_acpi loaded as a module"
+            elif [ -d /sys/module/thinkpad_acpi ]; then
+                echo "  [ok]   thinkpad_acpi present (built into the kernel)"
+            else
+                echo "  [FAIL] thinkpad_acpi not present - this is not a supported machine"
+                verdict=1
+            fi
+
+            if [ -e "$FAN_CONTROL_FILE" ]; then
+                echo "  [ok]   $FAN_CONTROL_FILE exists"
+            else
+                echo "  [FAIL] $FAN_CONTROL_FILE missing - nothing to control"
+                echo
+                echo "Verdict: NOT SUPPORTED."
+                exit 1
+            fi
+
+            fan_out=$(cat "$FAN_CONTROL_FILE" 2>/dev/null || true)
+            if printf '%s' "$fan_out" | grep -q "^status:.*enabled"; then
+                echo "  [ok]   manual fan control is enabled"
+            else
+                echo "  [warn] manual control disabled - add thinkpad_acpi.fan_control=1 and reboot"
+                verdict=1
+            fi
+
+            if printf '%s' "$fan_out" | grep -q "level <level>"; then
+                echo "  [ok]   the 'level' command is accepted"
+            else
+                echo "  [FAIL] no 'level' command - this model cannot be driven this way"
+                verdict=1
+            fi
+
+            for feature in auto disengaged full-speed; do
+                if printf '%s' "$fan_out" | grep -q "$feature"; then
+                    echo "  [ok]   '$feature' supported"
+                else
+                    echo "  [warn] '$feature' NOT supported on this model"
+                    [ "$feature" = "disengaged" ] && \
+                        echo "         -> set CRITICAL_TEMP above any reachable temperature"
+                fi
+            done
+
+            if printf '%s' "$fan_out" | grep -q "watchdog <timeout>"; then
+                echo "  [ok]   EC watchdog available"
+            else
+                echo "  [warn] no EC watchdog - set WATCHDOG_TIMEOUT=0"
+            fi
+
+            sensor_count=0
+            for pattern in "/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input" \
+                           "/sys/class/hwmon/hwmon*/temp*_input" \
+                           "/sys/class/thermal/thermal_zone*/temp"; do
+                for file in $pattern; do
+                    [ -f "$file" ] && sensor_count=$(( sensor_count + 1 ))
+                done
+            done
+            if [ "$sensor_count" -gt 0 ]; then
+                echo "  [ok]   $sensor_count temperature sensors readable"
+            else
+                echo "  [FAIL] no temperature sensors found"
+                verdict=1
+            fi
+
+            echo
+            if [ "$verdict" -eq 0 ]; then
+                echo "Verdict: SUPPORTED. Run 'thinkfan-ex -probe' to measure this model's"
+                echo "         actual RPM at each fan level before tuning thresholds."
+            else
+                echo "Verdict: problems found above. Fix the [FAIL] items before relying on this."
+            fi
+            exit "$verdict"
+            ;;
+
+        -probe)
+            # Measures real RPM per level. Spins the fan; takes about two minutes.
+            if [ "$EUID" -ne 0 ]; then
+                echo "The probe must be run as root. Exiting."
+                exit 1
+            fi
+            if [ ! -e "$FAN_CONTROL_FILE" ]; then
+                echo "No $FAN_CONTROL_FILE. Run 'thinkfan-ex -check' first."
+                exit 1
+            fi
+            if systemctl is-active --quiet thinkfan-extreme.service 2>/dev/null; then
+                echo "thinkfan-extreme.service is running and would fight the probe for control."
+                echo "Stop it first:  sudo systemctl stop thinkfan-extreme"
+                exit 1
+            fi
+
+            probe_temp() {
+                local hottest=0 v
+                for f in /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input; do
+                    [ -f "$f" ] || continue
+                    v=$(cat "$f" 2>/dev/null || true); v=${v:-0}
+                    [ "$v" -gt "$hottest" ] && hottest=$v
+                done
+                echo "$hottest"
+            }
+
+            start_temp=$(probe_temp)
+            if [ "$start_temp" -gt 65000 ]; then
+                echo "CPU is at $(( start_temp / 1000 ))C. Let it cool below 65C before probing;"
+                echo "the probe holds low fan levels for several seconds at a time."
+                exit 1
+            fi
+
+            if [ "${2:-}" != "-y" ]; then
+                echo "This will step the fan through every level, including level 0 (fan off)."
+                echo "It takes roughly two minutes and is audible. Automatic control is"
+                echo "restored when it finishes or if you interrupt it."
+                printf "Continue? [y/N] "
+                read -r reply
+                case "$reply" in [yY]*) ;; *) echo "Aborted."; exit 0 ;; esac
+            fi
+
+            probe_restored=0
+            probe_restore() {
+                [ "$probe_restored" -eq 1 ] && return 0
+                probe_restored=1
+                echo "level auto" > "$FAN_CONTROL_FILE" 2>/dev/null || true
+                echo
+                echo "Automatic fan control restored."
+            }
+            trap probe_restore EXIT INT TERM
+
+            # A fan is a mechanical system: it does not reach its new speed the
+            # moment a level is written. Rather than guess a dwell time, poll the
+            # tachometer until consecutive readings stop changing.
+            POLL=${POLL:-2}                # seconds between tachometer reads
+            SETTLE_TOL=${SETTLE_TOL:-60}   # RPM difference counted as "no change"
+            SETTLE_HITS=${SETTLE_HITS:-3}  # consecutive steady reads required
+            PROBE_MIN=${PROBE_MIN:-6}      # never accept a reading sooner than this
+            PROBE_MAX=${PROBE_MAX:-45}     # give up waiting after this
+
+            read_rpm() {
+                local v
+                v=$(grep -m1 "^speed:" "$FAN_CONTROL_FILE" 2>/dev/null | awk '{print $2}' || true)
+                case "$v" in
+                    ''|*[!0-9]*) echo "-1" ;;
+                    *) echo "$v" ;;
+                esac
+            }
+
+            # Wait for the tachometer to go steady. Sets settle_rpm, settle_secs,
+            # settle_state ("steady" or "timeout").
+            #
+            # Steadiness is measured as the spread across a window of recent
+            # readings, not as the difference between consecutive ones. A slow
+            # ramp moves less than the tolerance from one poll to the next while
+            # still climbing steadily, and would otherwise be mistaken for steady.
+            wait_for_steady() {
+                local limit="$1" elapsed=0 rpm=-1 lo hi v
+                local -a window=()
+                settle_state="timeout"
+                while [ "$elapsed" -lt "$limit" ]; do
+                    sleep "$POLL"
+                    elapsed=$(( elapsed + POLL ))
+                    rpm=$(read_rpm)
+                    [ "$rpm" -lt 0 ] && continue
+                    window+=("$rpm")
+                    while [ "${#window[@]}" -gt $(( SETTLE_HITS + 1 )) ]; do
+                        window=("${window[@]:1}")
+                    done
+                    if [ "${#window[@]}" -eq $(( SETTLE_HITS + 1 )) ] \
+                       && [ "$elapsed" -ge "$PROBE_MIN" ]; then
+                        lo=${window[0]}; hi=${window[0]}
+                        for v in "${window[@]}"; do
+                            [ "$v" -lt "$lo" ] && lo=$v
+                            [ "$v" -gt "$hi" ] && hi=$v
+                        done
+                        if [ $(( hi - lo )) -le "$SETTLE_TOL" ]; then
+                            settle_state="steady"
+                            break
+                        fi
+                    fi
+                done
+                settle_rpm=$rpm
+                settle_secs=$elapsed
+            }
+
+            echo
+            echo "Fan level -> RPM   ($model)"
+            echo "Each level is held until the tachometer stops changing."
+            echo "---------------------------------------------------------"
+            printf "  %-11s %8s %9s  %s\n" "level" "RPM" "settled" "cpu"
+            for lvl in 0 1 2 3 4 5 6 7 auto disengaged; do
+                printf "%s\n" "level $lvl" > "$FAN_CONTROL_FILE" 2>/dev/null || {
+                    printf "  %-11s not accepted by this model\n" "$lvl"; continue; }
+
+                # Disengaged is open-loop and ramps slowly; allow far longer.
+                if [ "$lvl" = "disengaged" ]; then
+                    wait_for_steady "${PROBE_MAX_DISENGAGED:-120}"
+                else
+                    wait_for_steady "$PROBE_MAX"
+                fi
+
+                now=$(probe_temp)
+                if [ "$settle_state" = "steady" ]; then
+                    note="${settle_secs}s"
+                else
+                    note="${settle_secs}s*"
+                fi
+                if [ "$settle_rpm" -lt 0 ]; then
+                    shown="?"
+                else
+                    shown="$settle_rpm"
+                fi
+                printf "  %-11s %8s %9s  %sC\n" "$lvl" "$shown" "$note" "$(( now / 1000 ))"
+
+                if [ "$now" -gt 80000 ]; then
+                    echo "  CPU reached $(( now / 1000 ))C - stopping the probe early."
+                    break
+                fi
+            done
+            echo "---------------------------------------------------------"
+            echo "* = never went steady within the time limit; treat as approximate."
+            echo "Levels sharing an RPM are interchangeable, so give them one threshold"
+            echo "between them rather than several."
+            exit 0
+            ;;
+
         -status)
             echo "Current fan control file contents:"
             cat "$FAN_CONTROL_FILE"
@@ -280,6 +520,8 @@ if [ "$#" -gt 0 ]; then
         -help|--help)
             echo "Usage: thinkfan-ex [option]"
             echo "Options:"
+            echo "  -check    : Report whether this machine supports fan control."
+            echo "  -probe    : Measure real RPM at each fan level. Spins the fan, ~2 min."
             echo "  -status   : Display current fan status and sensor temperature readings."
             echo "  -config   : Create or edit the config file at \$CONFIG_FILE."
             echo "  -uninstall: Uninstall thinkfan-ex, disable its systemd service, revert GRUB changes, and remove bash completion."
@@ -400,7 +642,7 @@ get_current_temp() {
 # Downshifts move one level at a time. Applying HYSTERESIS to every level below
 # the current one, rather than as a deadband around it, merely shifts the whole
 # ladder down and leaves the bands as narrow as before.
-HYSTERESIS=${HYSTERESIS:-8000}
+HYSTERESIS=${HYSTERESIS:-6000}
 SMOOTH_SAMPLES=${SMOOTH_SAMPLES:-5}
 
 mapfile -t sorted_levels < <(printf '%s\n' "${!level_threshold[@]}" | sort -rn)
@@ -500,7 +742,7 @@ cat > "$COMPLETION_FILE" << 'EOF'
 _thinkfan_ex_completions() {
     local cur opts
     cur="${COMP_WORDS[COMP_CWORD]}"
-    opts="-status -config -uninstall -help"
+    opts="-check -probe -status -config -uninstall -help"
     COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
     return 0
 }
