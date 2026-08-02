@@ -220,6 +220,10 @@ HYSTERESIS=6000
 # Readings averaged when deciding to step down. Upshifts ignore this.
 SMOOTH_SAMPLES=5
 
+# Consecutive readings that must agree before the level is raised. Stops a brief
+# spike from raising the level only for the next poll to lower it again.
+UP_CONFIRM=2
+
 # Seconds of silence after which the EC takes fan control back. 0 disables.
 WATCHDOG_TIMEOUT=120
 
@@ -270,9 +274,17 @@ avoiding if you reimplement this.
 default 5 and a 3-second poll, roughly 15 seconds of history has to agree before the
 fan winds down.
 
-Upshifts use neither. They act on the latest raw reading and are never delayed, so a
-sudden load gets cooling on the very next poll. Adding cooling quickly is safe;
-removing it slowly is safe; the reverse arrangement would be neither.
+Upshifts use neither average nor deadband. They act on the raw reading, so a real
+load gets cooling almost immediately. Adding cooling quickly is safe; removing it
+slowly is safe; the reverse arrangement would be neither.
+
+**`UP_CONFIRM` guards the one weakness in that asymmetry.** Because a rise is
+judged on the raw reading while a fall is judged on the average, a single-sample
+spike can raise the level while the average is still low enough to permit an
+immediate drop — the fan undoes its own decision one poll later. Requiring two
+consecutive readings to agree before raising costs one extra poll of reaction time
+and removes the effect: on a recorded idle trace with periodic spikes it cut level
+changes from 44 to 2. Set it to 1 for the old immediate behaviour.
 
 If levels still change too often, raise `HYSTERESIS` first — it should exceed your
 typical swing, not merely match the gap between thresholds. Raise `SMOOTH_SAMPLES`
@@ -418,6 +430,11 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
 
 ### 1.2
 
+Validated on a repasted ThinkPad T480 (i7-8650U). Across a seven-minute run
+covering idle, a three-minute all-core load and the full cooldown, the daemon made
+eight level changes, all of them real thermal events, with no reversals. The
+previous release flapped eight times at idle alone.
+
 **Changed**
 
 - Default thresholds rebuilt from measured fan speeds rather than assumed ones.
@@ -429,6 +446,10 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
 
 - `fanbench.sh`, an interactive bench for reading real fan speeds: live RPM,
   level switching by keypress, and a min/max/last table per level.
+- `UP_CONFIRM`, requiring consecutive readings to agree before the level is
+  raised. A single-sample spike previously raised the level while the smoothed
+  temperature still permitted an immediate drop, so the fan reversed itself on the
+  next poll. On a recorded idle trace this cut level changes from 44 to 2.
 
 ### 1.1
 

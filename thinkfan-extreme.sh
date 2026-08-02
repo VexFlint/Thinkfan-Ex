@@ -153,6 +153,11 @@ HYSTERESIS=6000
 # latest reading and are never delayed by this.
 SMOOTH_SAMPLES=5
 
+# Consecutive readings that must agree before the level is raised. Stops a brief
+# temperature spike from raising the level only for the next poll to lower it.
+# Costs one extra poll of reaction time. Set to 1 for immediate upshifts.
+UP_CONFIRM=2
+
 # Seconds of silence after which the embedded controller takes fan control back.
 # This is what protects you if the daemon is killed outright. Range 1-120,
 # or 0 to disable. Leave it on unless you have a reason not to.
@@ -196,6 +201,7 @@ if ! bash -n "$CONFIG_FILE" 2>/dev/null; then
     CRITICAL_TEMP=88000
     HYSTERESIS=6000
     SMOOTH_SAMPLES=5
+    UP_CONFIRM=2
     declare -A level_threshold
     level_threshold[1]=45000
     level_threshold[2]=52000
@@ -218,6 +224,7 @@ log_event "DEBUG: configuration loaded from $CONFIG_SOURCE"
 log_event "DEBUG: CRITICAL_TEMP is set to $CRITICAL_TEMP"
 log_event "DEBUG: HYSTERESIS is set to $HYSTERESIS"
 log_event "DEBUG: SMOOTH_SAMPLES is set to ${SMOOTH_SAMPLES:-5}"
+log_event "DEBUG: UP_CONFIRM is set to ${UP_CONFIRM:-2}"
 log_event "DEBUG: WATCHDOG_TIMEOUT is set to $WATCHDOG_TIMEOUT"
 for key in "${!level_threshold[@]}"; do
     log_event "DEBUG: level_threshold[$key] = ${level_threshold[$key]}"
@@ -644,10 +651,18 @@ get_current_temp() {
 # ladder down and leaves the bands as narrow as before.
 HYSTERESIS=${HYSTERESIS:-6000}
 SMOOTH_SAMPLES=${SMOOTH_SAMPLES:-5}
+# Consecutive readings that must agree before the level is raised. Upshifts act
+# on the raw reading and downshifts on the average, so a single-sample spike
+# would otherwise raise the level only for the next poll to lower it again.
+# Requiring two agreeing readings costs one extra poll of reaction time and
+# removes that entirely. Set to 1 for the old immediate behaviour.
+UP_CONFIRM=${UP_CONFIRM:-2}
 
 mapfile -t sorted_levels < <(printf '%s\n' "${!level_threshold[@]}" | sort -rn)
 temp_history=()
 last_level=""
+up_pending=""
+up_count=0
 
 while true; do
     current_temp=$(get_current_temp)
@@ -684,8 +699,21 @@ while true; do
             desired_level="level auto"
         fi
     elif [ -n "$plain_level" ] && (( plain_level > last_level )); then
-        last_level=$plain_level
-        desired_level="level $plain_level"
+        # Confirm the rise across consecutive readings before acting on it.
+        if [ "$up_pending" = "$plain_level" ]; then
+            up_count=$(( up_count + 1 ))
+        else
+            up_pending=$plain_level
+            up_count=1
+        fi
+        if (( up_count >= UP_CONFIRM )); then
+            last_level=$plain_level
+            up_pending=""
+            up_count=0
+            desired_level="level $plain_level"
+        else
+            desired_level="level $last_level"
+        fi
     elif (( avg_temp < level_threshold[$last_level] - HYSTERESIS )) \
          && (( current_temp < level_threshold[$last_level] )); then
         # Past the deadband on the average, and the latest reading agrees. The
@@ -697,12 +725,19 @@ while true; do
         done
         if (( next_level >= 0 )); then
             last_level=$next_level
+            up_pending=""
+            up_count=0
             desired_level="level $next_level"
         else
             last_level=""
+            up_pending=""
+            up_count=0
             desired_level="level auto"
         fi
     else
+        # Holding: any partial upshift confirmation is stale, so drop it.
+        up_pending=""
+        up_count=0
         desired_level="level $last_level"
     fi
 
