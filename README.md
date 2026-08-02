@@ -104,9 +104,16 @@ Every temperature is in **millidegrees Celsius**: `70000` is 70 °C.
 # compare it against your CPU's TjMax (usually 100C), not against idle temps.
 CRITICAL_TEMP=90000
 
-# Downshift stickiness, in millidegrees. See "Hysteresis" below.
-# Must be >= the gap between adjacent thresholds, or levels will flap.
-HYSTERESIS=5000
+# Downshift deadband, in millidegrees. See "Hysteresis" below.
+HYSTERESIS=8000
+
+# Readings averaged when deciding to step down. Upshifts ignore this.
+SMOOTH_SAMPLES=5
+
+# Seconds of silence after which the embedded controller takes fan control back.
+# This is what protects you if the daemon is killed outright. Range 1-120,
+# or 0 to disable. Leave it on unless you have a reason not to.
+WATCHDOG_TIMEOUT=120
 
 # Temperature thresholds for each fan level.
 declare -A level_threshold
@@ -134,25 +141,35 @@ sitting on a threshold makes the fan change level every polling interval. The re
 is audible pulsing and needless wear:
 
 ```
-19:34:50  disengaged → level 5
-19:34:53  5 → level 3
-19:34:57  3 → level 5
-19:35:00  5 → level 3
-19:35:03  3 → level 5
+19:34:50  disengaged -> level 5
+19:34:53  5 -> level 3
+19:34:57  3 -> level 5
+19:35:00  5 -> level 3
 ```
 
-`HYSTERESIS` splits that one line into two: a higher line to move **up** a level, a
-lower line to fall back **down**. At level 5, with a threshold of `70000` and
-`HYSTERESIS=5000`, the fan enters level 5 at 70 °C but won't drop to level 4 until
-the temperature actually reaches 65 °C. The same five readings now produce one
-change instead of four.
+Two mechanisms prevent that, and they pull in opposite directions on purpose.
 
-Upward transitions are never delayed. Adding cooling quickly is safe, removing it
-slowly is safe, and the reverse arrangement would be neither.
+**`HYSTERESIS` is a deadband around the level currently held.** The fan stays where
+it is until the temperature falls that far *below* the threshold that put it there.
+At level 5 with a threshold of `70000` and `HYSTERESIS=8000`, the fan won't step down
+until 62 °C. Downshifts then move one level at a time rather than jumping.
 
-Pick a value at least as large as your typical swing between polls — otherwise the
-jitter still crosses both lines and the level flaps anyway. Larger values make the
-fan quieter and lazier, but slower to wind down once a load ends.
+Note this is a deadband around the *current* level, not an offset applied to every
+level beneath it. Offsetting the whole ladder shifts all the bands down while leaving
+them exactly as narrow as before, which does almost nothing — a mistake worth
+avoiding if you reimplement this.
+
+**`SMOOTH_SAMPLES` averages the readings used to decide a downshift.** With the
+default 5 and a 3-second poll, roughly 15 seconds of history has to agree before the
+fan winds down.
+
+Upshifts use neither. They act on the latest raw reading and are never delayed, so a
+sudden load gets cooling on the very next poll. Adding cooling quickly is safe;
+removing it slowly is safe; the reverse arrangement would be neither.
+
+If levels still change too often, raise `HYSTERESIS` first — it should exceed your
+typical swing, not merely match the gap between thresholds. Raise `SMOOTH_SAMPLES`
+only if the readings themselves are noisy; it costs responsiveness when a load ends.
 
 ### Tuning to your machine
 
@@ -191,25 +208,27 @@ limited — a more aggressive fan curve will buy you noise and nothing else.
 
 ## Safety
 
-`thinkfan-ex` restores `level auto` through an `EXIT` trap, which covers normal
-shutdown and `systemctl stop`. It does not cover everything:
+`thinkfan-ex` gives up manual control in two independent ways, because one of them
+is not enough.
 
-- `-uninstall` exits before that trap is ever installed
-- `SIGKILL` (including the OOM killer) doesn't run traps at all
+**The `EXIT` trap** restores `level auto` on normal shutdown and on
+`systemctl stop`. It does not run on `SIGKILL`, which includes the OOM killer, and
+`-uninstall` exits before the trap is ever installed.
 
-In either case the fan stays at whatever level was last written. If you've been
-running `disengaged` that's merely loud, but if it was sitting at a low level on a
-hot CPU it's a real risk. Restore it by hand:
+**The EC watchdog** covers that gap. It is armed automatically at startup from
+`WATCHDOG_TIMEOUT` (default 120 seconds). If the daemon stops writing to
+`/proc/acpi/ibm/fan` for that long, firmware resumes automatic control on its own —
+no software involvement required, so it survives a killed process.
+
+The daemon skips redundant writes to keep the log readable, but refreshes the
+current level every `WATCHDOG_TIMEOUT / 3` seconds regardless, so a steady
+temperature still registers as a live daemon. If you disable the watchdog by setting
+`WATCHDOG_TIMEOUT=0`, that refresh stops too.
+
+After `-uninstall`, restore automatic control by hand:
 
 ```bash
 echo "level auto" | sudo tee /proc/acpi/ibm/fan
-```
-
-For unattended machines, arm the EC watchdog so firmware reclaims control if the
-daemon stops writing:
-
-```bash
-echo "watchdog 120" | sudo tee /proc/acpi/ibm/fan
 ```
 
 ## Logging
@@ -246,7 +265,9 @@ echo "level auto" | sudo tee /proc/acpi/ibm/fan
 ```
 
 This stops and disables the service, removes the daemon and bash completion, and
-reverts the GRUB parameter. The second command is not optional — see [Safety](#safety).
+reverts the GRUB parameter. The second command is not optional: `-uninstall` exits
+before the restore trap is installed, so the fan stays at whatever level was last
+written. See [Safety](#safety).
 
 The config file and logs are left in place; remove them yourself if you want a clean
 slate:
@@ -270,14 +291,23 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
   command is `level auto`.
 - A `grep` miss while reading the current level aborted the loop under `set -e`.
 - `local error_code=$?` always captured 0, because `local` resets `$?`.
-- `systemctl enable` armed the service for the next boot but never started it. Now
-  `enable --now`.
+- `systemctl enable --now` would not restart an already-running service, so
+  reinstalling over a live install left the old daemon running the old code. The
+  installer now restarts explicitly.
 - The fallback configuration used when the config file fails its syntax check no
   longer diverges from the shipped defaults.
 
 **Added**
 
-- `HYSTERESIS`, preventing the fan level from flapping on every threshold crossing.
+- `HYSTERESIS` as a deadband around the level currently held, plus `SMOOTH_SAMPLES`
+  to average the readings behind a downshift. Upshifts still act on the latest raw
+  reading. On 20 minutes of recorded idle jitter this cut level changes from 24 to 8.
+- `WATCHDOG_TIMEOUT`, armed automatically at startup, so firmware reclaims the fan
+  if the daemon is killed without running its cleanup trap. The skip-redundant-writes
+  optimisation refreshes the current level periodically so it cannot starve the
+  watchdog while the daemon is healthy.
+- The log now records which configuration source was used, plus the resolved
+  `HYSTERESIS` and `WATCHDOG_TIMEOUT` values.
 
 **Changed**
 

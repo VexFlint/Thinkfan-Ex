@@ -151,9 +151,21 @@ DEFAULT_CONFIG_CONTENT=$(cat <<'EOC'
 # genuine emergency rung, not a normal operating point.
 CRITICAL_TEMP=90000
 
-# Downshift stickiness in millidegrees. Must be >= the gap between thresholds
-# or the level flaps on every crossing.
-HYSTERESIS=5000
+# Downshift deadband in millidegrees. The fan holds its current level until the
+# smoothed temperature falls this far below that level's threshold. Make it
+# larger than your typical temperature swing, not merely equal to the gap
+# between thresholds.
+HYSTERESIS=8000
+
+# How many readings to average when deciding to step down. Raising this ignores
+# more jitter but reacts more slowly once a load ends. Upshifts always use the
+# latest reading and are never delayed by this.
+SMOOTH_SAMPLES=5
+
+# Seconds of silence after which the embedded controller takes fan control back.
+# This is what protects you if the daemon is killed outright. Range 1-120,
+# or 0 to disable. Leave it on unless you have a reason not to.
+WATCHDOG_TIMEOUT=120
 
 # Temperature thresholds for each fan level (in millidegrees Celsius).
 declare -A level_threshold
@@ -173,10 +185,12 @@ if [ ! -f "$CONFIG_FILE" ]; then
     echo "$DEFAULT_CONFIG_CONTENT" > "$CONFIG_FILE"
 fi
 
+CONFIG_SOURCE="built-in defaults (config file failed its syntax check)"
 if ! bash -n "$CONFIG_FILE" 2>/dev/null; then
     echo "Error: Configuration file $CONFIG_FILE has syntax errors. Falling back to default configuration." >&2
     CRITICAL_TEMP=90000
-    HYSTERESIS=5000
+    HYSTERESIS=8000
+    SMOOTH_SAMPLES=5
     declare -A level_threshold
     level_threshold[0]=45000
     level_threshold[1]=50000
@@ -188,11 +202,21 @@ if ! bash -n "$CONFIG_FILE" 2>/dev/null; then
     level_threshold[7]=85000
 else
     . "$CONFIG_FILE"
+    CONFIG_SOURCE="$CONFIG_FILE"
 fi
+
+# Watchdog: the EC reclaims fan control if nothing writes to the fan interface
+# within this many seconds, so a crashed daemon cannot leave the fan stuck.
+# Set to 0 to disable. Valid range is 1-120.
+WATCHDOG_TIMEOUT=${WATCHDOG_TIMEOUT:-120}
 # === End of Configuration File Handling ===
 
 # --- Debug Logging: Verify configuration values ---
+log_event "DEBUG: configuration loaded from $CONFIG_SOURCE"
 log_event "DEBUG: CRITICAL_TEMP is set to $CRITICAL_TEMP"
+log_event "DEBUG: HYSTERESIS is set to $HYSTERESIS"
+log_event "DEBUG: SMOOTH_SAMPLES is set to ${SMOOTH_SAMPLES:-5}"
+log_event "DEBUG: WATCHDOG_TIMEOUT is set to $WATCHDOG_TIMEOUT"
 for key in "${!level_threshold[@]}"; do
     log_event "DEBUG: level_threshold[$key] = ${level_threshold[$key]}"
 done
@@ -278,6 +302,24 @@ if ! grep -q "enabled" "$FAN_CONTROL_FILE"; then
     log_event "Warning: Fan control file may not be enabled for manual control."
 fi
 
+# Arm the EC watchdog. If this daemon stops writing to the fan interface for
+# WATCHDOG_TIMEOUT seconds, firmware resumes automatic control by itself. This is
+# the only protection against a SIGKILL, which cannot run the cleanup trap below.
+if [ "$WATCHDOG_TIMEOUT" -gt 0 ] 2>/dev/null; then
+    if printf "watchdog %s\n" "$WATCHDOG_TIMEOUT" > "$FAN_CONTROL_FILE" 2>>"$LOG_FILE"; then
+        log_event "EC watchdog armed at ${WATCHDOG_TIMEOUT}s."
+    else
+        log_event "WARNING: could not arm EC watchdog; a killed daemon will leave the fan latched."
+    fi
+    # Refresh well inside the timeout so a steady fan level still counts as alive.
+    REFRESH_INTERVAL=$(( WATCHDOG_TIMEOUT / 3 ))
+    [ "$REFRESH_INTERVAL" -lt 10 ] && REFRESH_INTERVAL=10
+else
+    log_event "EC watchdog disabled by configuration."
+    REFRESH_INTERVAL=0
+fi
+last_write=0
+
 # On exit, restore automatic fan control.
 cleanup() {
     log_event "Restoring automatic fan control (level auto)."
@@ -289,17 +331,27 @@ trap cleanup EXIT
 set_fan_level() {
     local target="$1"
     local current error_code
-    # ponytail: grep miss returns 1 and set -e would abort the whole loop
+    # A grep miss returns 1, which set -e would treat as fatal.
     current=$(grep -m1 "^level:" "$FAN_CONTROL_FILE" 2>/dev/null | awk '{print $2}' || true)
     current=${current:-unknown}
 
-    # ponytail: no-op writes every 3s just spam the log
+    now=$(date +%s)
+    # Skip redundant writes, which would otherwise log an entry every poll. But
+    # never skip for so long that the EC watchdog decides we have died: a steady
+    # temperature is still a live daemon.
     if [ "level $current" = "$target" ]; then
+        if [ "$REFRESH_INTERVAL" -eq 0 ] || [ $(( now - last_write )) -lt "$REFRESH_INTERVAL" ]; then
+            return 0
+        fi
+        printf "%s\n" "$target" > "$FAN_CONTROL_FILE" 2>>"$LOG_FILE" || \
+            log_event "Watchdog refresh write failed at $target."
+        last_write=$now
         return 0
     fi
 
     log_event "Attempting to change fan level: $current → $target"
     if printf "%s\n" "$target" > "$FAN_CONTROL_FILE" 2>>"$LOG_FILE"; then
+        last_write=$now
         log_event "Fan level change succeeded: $current → $target"
     else
         error_code=$?
@@ -328,7 +380,7 @@ get_current_temp() {
         return
     fi
     for file in "${sensor_files[@]}"; do
-        # ponytail: some hwmon nodes return empty (cat exits 0), so ||echo 0 never fires
+        # Some hwmon nodes return empty while cat still exits 0, so || echo 0 never fires.
         value=$(cat "$file" 2>/dev/null || true)
         value=${value:-0}
         if [ "$value" -gt "$temp" ]; then
@@ -339,35 +391,77 @@ get_current_temp() {
 }
 
 # Main loop: read temperature, decide fan level, and set it.
-# ponytail: without hysteresis the level flaps on every threshold crossing (audible fan pulsing)
-HYSTERESIS=${HYSTERESIS:-5000}
+#
+# Two temperatures drive the decision, deliberately:
+#   * the raw reading decides upshifts and the critical check, so extra cooling
+#     is never delayed by averaging
+#   * a moving average decides whether to hold or step down, so ordinary jitter
+#     on the way down does not make the level flap
+# Downshifts move one level at a time. Applying HYSTERESIS to every level below
+# the current one, rather than as a deadband around it, merely shifts the whole
+# ladder down and leaves the bands as narrow as before.
+HYSTERESIS=${HYSTERESIS:-8000}
+SMOOTH_SAMPLES=${SMOOTH_SAMPLES:-5}
+
+mapfile -t sorted_levels < <(printf '%s\n' "${!level_threshold[@]}" | sort -rn)
+temp_history=()
 last_level=""
+
 while true; do
     current_temp=$(get_current_temp)
 
-    desired_level="level auto"
-    crit=$CRITICAL_TEMP
-    [ "$last_level" = "disengaged" ] && crit=$(( CRITICAL_TEMP - HYSTERESIS ))
+    # Rolling average over the last SMOOTH_SAMPLES readings.
+    temp_history+=("$current_temp")
+    while [ "${#temp_history[@]}" -gt "$SMOOTH_SAMPLES" ]; do
+        temp_history=("${temp_history[@]:1}")
+    done
+    temp_sum=0
+    for t in "${temp_history[@]}"; do
+        temp_sum=$(( temp_sum + t ))
+    done
+    avg_temp=$(( temp_sum / ${#temp_history[@]} ))
 
-    if (( current_temp >= crit )); then
+    # Highest level the raw temperature justifies, ignoring hysteresis.
+    plain_level=""
+    for level in "${sorted_levels[@]}"; do
+        if (( current_temp >= level_threshold[$level] )); then
+            plain_level=$level
+            break
+        fi
+    done
+
+    if (( current_temp >= CRITICAL_TEMP )); then
         desired_level="level disengaged"
         last_level="disengaged"
-    else
-        # Collect defined levels and sort them in descending order.
-        mapfile -t sorted_levels < <(printf '%s\n' "${!level_threshold[@]}" | sort -rn)
-
-        for level in "${sorted_levels[@]}"; do
-            thr=${level_threshold[$level]}
-            # Sticky downward: hold the current level until temp falls HYSTERESIS below it.
-            if [[ "$last_level" =~ ^[0-9]+$ ]] && (( level <= last_level )); then
-                thr=$(( thr - HYSTERESIS ))
-            fi
-            if (( current_temp >= thr )); then
-                desired_level="level $level"
-                last_level="$level"
-                break
-            fi
+    elif ! [[ "$last_level" =~ ^[0-9]+$ ]]; then
+        # No level held yet, or coming back from auto/disengaged.
+        if [ -n "$plain_level" ]; then
+            last_level=$plain_level
+            desired_level="level $plain_level"
+        else
+            desired_level="level auto"
+        fi
+    elif [ -n "$plain_level" ] && (( plain_level > last_level )); then
+        last_level=$plain_level
+        desired_level="level $plain_level"
+    elif (( avg_temp < level_threshold[$last_level] - HYSTERESIS )) \
+         && (( current_temp < level_threshold[$last_level] )); then
+        # Past the deadband on the average, and the latest reading agrees. The
+        # second test stops a downshift while the average is still catching up
+        # to a genuine spike.
+        next_level=$(( last_level - 1 ))
+        while (( next_level >= 0 )) && [ -z "${level_threshold[$next_level]+set}" ]; do
+            next_level=$(( next_level - 1 ))
         done
+        if (( next_level >= 0 )); then
+            last_level=$next_level
+            desired_level="level $next_level"
+        else
+            last_level=""
+            desired_level="level auto"
+        fi
+    else
+        desired_level="level $last_level"
     fi
 
     set_fan_level "$desired_level"
@@ -418,8 +512,12 @@ log_event "Installed bash completion file to $COMPLETION_FILE."
 
 # Reload systemd daemon and enable the service.
 systemctl daemon-reload
-systemctl enable --now thinkfan-extreme.service
-log_event "Enabled and started thinkfan-extreme.service."
+systemctl enable thinkfan-extreme.service
+# restart, not "enable --now": --now will not start a unit that is already
+# running, so reinstalling over a live service would leave the old daemon
+# executing the old code from memory.
+systemctl restart thinkfan-extreme.service
+log_event "Enabled and (re)started thinkfan-extreme.service."
 
 echo "Better reboot the machine for Thinkfan-Extreme to work properly."
 log_event "Thinkfan-Extreme deployment complete. Please reboot."
