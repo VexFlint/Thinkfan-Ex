@@ -1,43 +1,102 @@
-# Thinkfan-Extreme Deployment Script
+# Thinkfan-Extreme
 
-## Overview
+Aggressive, fully configurable fan control for ThinkPad laptops — including the
+`disengaged` mode that bypasses the embedded controller's RPM ceiling and runs the
+fan flat out.
 
-This script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It performs the following actions:
+ThinkPad firmware is conservative by design. It will happily let a CPU sit at 95 °C
+and throttle rather than spin the fan harder, because Lenovo tuned the curve for
+acoustics on a machine that has to be sold in an office. If you've repasted, if you
+run sustained loads, or if you simply care more about clocks than about silence,
+you want your own curve. This gives you one.
 
-- **Root Access & ACPI Verification:** Ensures the script runs as root and that the ThinkPad ACPI module is configured with `fan_control=1`.
-- **GRUB Boot Parameter Update:** Adds `thinkpad_acpi.fan_control=1` to the kernel boot parameters and runs `update-grub`.
-- **Kernel Module Reloading:** Attempts to reload the `thinkpad_acpi` module (or advises a reboot if it’s built into the kernel).
-- **Installation of Custom Fan Control Script:** Installs `thinkfan-ex` which:
-  - Monitors temperature sensor files.
-  - Maps temperatures to fan levels.
-  - Supports command-line options:
-    - **`-status`**: Displays current fan status and sensor temperature readings.
-    - **`-config`**: Opens the configuration file (`/etc/thinkfan-extreme.conf`) for editing.
-    - **`-uninstall`**: Removes the fan control setup (script, systemd service, GRUB changes, and bash completion).
-    - **`-help` / `--help`**: Displays usage information.
-- **Systemd Service Unit & Bash Completion:** Creates and enables a systemd service (`thinkfan-extreme.service`) and installs bash completion for ease of use.
-- **Logging:** Detailed logs are written to `/var/log/thinkfan-extreme.log`.
+---
 
-<h2>Installation</h2>
-<ol>
-  <li>
-    <strong>Download the Script:</strong> Save the deployment script (for example, as <code>/home/$USER/Downloads/thinkfan-extreme.sh</code>).
-  </li>
-  <li>
-    <strong>Make It Executable:</strong>
-    <pre><code>sudo chmod +x /home/$USER/Downloads/thinkfan-extreme.sh</code></pre>
-  </li>
-  <li>
-    <strong>Run the Script as Root:</strong>
-    <pre><code>sudo /home/$USER/Downloads/thinkfan-extreme.sh</code></pre>
-  </li>
-  <li>
-    <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
-  </li>
-</ol>
-<h2>Example of config file</h2>
-<p>Defaults live in <code>/etc/thinkfan-extreme.conf</code>. Every temperature is in
-millidegrees Celsius (<code>70000</code> = 70&deg;C).</p>
+> [!WARNING]
+> This project takes fan control away from your firmware. If the daemon dies without
+> restoring automatic mode, the fan stays wherever it was last set — possibly at a
+> low level, on a hot CPU, with nothing supervising it. Read
+> [Safety](#safety) before running this on a machine you care about.
+
+---
+
+## What it does
+
+The installer (`thinkfan-extreme.sh`) sets up everything in one pass:
+
+- Verifies root, then ensures `/etc/modprobe.d/thinkpad_acpi.conf` contains
+  `fan_control=1`, backing up the existing file first if it needs changing
+- Appends `thinkpad_acpi.fan_control=1` to `GRUB_CMDLINE_LINUX` and runs `update-grub`
+- Reloads the `thinkpad_acpi` module, or tells you to reboot if it's built into
+  the kernel and therefore can't be reloaded
+- Installs the `thinkfan-ex` daemon to `/usr/local/bin`
+- Creates and starts `thinkfan-extreme.service`
+- Installs bash completion to `/etc/bash_completion.d/thinkfan-ex`
+
+The daemon (`thinkfan-ex`) then runs continuously: it reads every temperature sensor
+it can find, takes the hottest reading, maps it to a fan level through your
+configured thresholds, and writes that level to `/proc/acpi/ibm/fan`. Above
+`CRITICAL_TEMP` it switches to `disengaged`.
+
+## Requirements
+
+| | |
+|---|---|
+| Hardware | A ThinkPad, i.e. anything driven by `thinkpad_acpi` |
+| Kernel module | `thinkpad_acpi` loaded with `fan_control=1` (the installer handles this) |
+| Privileges | Root, for both the installer and the daemon |
+| Init system | systemd |
+| Optional | `msr-tools`, if you want the throttle diagnostics in [Tuning](#tuning-to-your-machine) |
+
+A reboot is required after installation, since the boot parameter only takes effect
+at boot.
+
+## Installation
+
+```bash
+git clone https://github.com/BrunoGrande/Thinkfan-Ex.git
+cd Thinkfan-Ex
+chmod +x thinkfan-extreme.sh
+sudo ./thinkfan-extreme.sh
+sudo reboot
+```
+
+Verify afterwards:
+
+```bash
+systemctl status thinkfan-extreme
+sudo thinkfan-ex -status
+```
+
+`status: enabled` in the fan output means manual control is active. If it says
+`disabled`, the boot parameter didn't take — check that `update-grub` actually
+modified `/etc/default/grub` and that you rebooted.
+
+## Usage
+
+The daemon starts at boot and needs no interaction. When you do want to poke at it:
+
+| Command | Effect |
+|---|---|
+| `sudo thinkfan-ex -status` | Current fan level, RPM, and every sensor reading |
+| `sudo thinkfan-ex -config` | Open `/etc/thinkfan-extreme.conf` in `$EDITOR` |
+| `sudo thinkfan-ex -uninstall` | Remove the daemon, service, GRUB change, and completion |
+| `thinkfan-ex -help` | Usage summary |
+
+After editing the config, restart the service so it re-reads it:
+
+```bash
+sudo systemctl restart thinkfan-extreme
+```
+
+## Configuration
+
+Lives in `/etc/thinkfan-extreme.conf`, created with defaults on first run. It's
+sourced as shell, so it's syntax-checked before use — if it fails the check, the
+daemon falls back to built-in defaults rather than dying.
+
+Every temperature is in **millidegrees Celsius**: `70000` is 70 °C.
+
 ```bash
 # Critical temperature. Above this the fan goes to "level disengaged",
 # which bypasses the EC's RPM ceiling and runs the fan flat out.
@@ -60,137 +119,184 @@ level_threshold[5]=70000
 level_threshold[6]=78000
 level_threshold[7]=85000
 ```
-<p>Levels may be omitted &mdash; the ladder is built from whichever keys you define,
-so skipping <code>level_threshold[4]</code> simply means level 4 is never used.</p>
 
-<h2>Hysteresis</h2>
-<p>A bare threshold is a single line: crossed going up, crossed going down, at the
-same temperature. Because CPU temperature jitters by several degrees between reads,
-any wobble sitting on a threshold makes the fan change level every polling interval &mdash;
-audible pulsing and needless wear.</p>
-<p><code>HYSTERESIS</code> splits that one line into two: a higher line to move
-<em>up</em> a level, a lower line to fall back <em>down</em>. At level 5 with a
-threshold of <code>70000</code> and <code>HYSTERESIS=5000</code>, the fan enters
-level 5 at 70&deg;C but will not drop to level 4 until the temperature actually
-reaches 65&deg;C.</p>
-<p>Upward transitions are never delayed. Adding cooling quickly is safe; removing it
-slowly is safe; the reverse would not be.</p>
-<p>Pick a value at least as large as your typical temperature swing between polls,
-otherwise the jitter still crosses both lines and the level flaps anyway. Larger
-values make the fan quieter and lazier, but slower to wind down after a load ends.</p>
+Levels may be omitted. The ladder is built from whichever keys you define, so
+dropping `level_threshold[4]` simply means level 4 is never used.
 
-<h2>Tuning to your machine</h2>
-<p>The shipped defaults are a starting point, not a universal curve. To calibrate:</p>
+Below the lowest threshold the daemon writes `level auto`, handing control back to
+firmware for genuinely idle temperatures.
+
+### Hysteresis
+
+A bare threshold is a single line: crossed going up, crossed going down, at the same
+temperature. CPU temperature jitters by several degrees between reads, so any wobble
+sitting on a threshold makes the fan change level every polling interval. The result
+is audible pulsing and needless wear:
+
+```
+19:34:50  disengaged → level 5
+19:34:53  5 → level 3
+19:34:57  3 → level 5
+19:35:00  5 → level 3
+19:35:03  3 → level 5
+```
+
+`HYSTERESIS` splits that one line into two: a higher line to move **up** a level, a
+lower line to fall back **down**. At level 5, with a threshold of `70000` and
+`HYSTERESIS=5000`, the fan enters level 5 at 70 °C but won't drop to level 4 until
+the temperature actually reaches 65 °C. The same five readings now produce one
+change instead of four.
+
+Upward transitions are never delayed. Adding cooling quickly is safe, removing it
+slowly is safe, and the reverse arrangement would be neither.
+
+Pick a value at least as large as your typical swing between polls — otherwise the
+jitter still crosses both lines and the level flaps anyway. Larger values make the
+fan quieter and lazier, but slower to wind down once a load ends.
+
+### Tuning to your machine
+
+The shipped defaults suit a repasted ThinkPad with TjMax 100 °C. They are a starting
+point, not a universal curve. To calibrate against your own hardware:
+
 ```bash
 { for z in /sys/class/thermal/thermal_zone*/; do echo "$z $(cat $z/type) $(cat $z/temp)"; done
   cat /proc/acpi/ibm/fan
   grep MHz /proc/cpuinfo
   sudo rdmsr 0x1b1; } 2>&1 | tee ~/thermal-snapshot.txt
 ```
-<p>Run it once at idle and again after several minutes at full load
-(<code>stress -c $(nproc)</code>), so the heatsink has saturated. Set the thresholds
-across the range between those two figures, and set <code>CRITICAL_TEMP</code>
-well above your sustained load temperature.</p>
-<p>Bit 0 of MSR <code>0x1b1</code> tells you whether the package is thermally
-throttling; bit 10 tells you whether it is merely power limited. A machine that is
-power limited rather than thermally limited does not benefit from a more aggressive
-fan curve.</p>
 
-<h1>Thinkfan-Extreme Deep Dive</h1>
-<p>This Bash script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It ensures proper ACPI settings and installs a custom fan control script (<code>thinkfan-ex</code>), a systemd service unit, and bash completion for enhanced command-line usability.</p>
-<h2>Features</h2>
-<ul>
-  <li><strong>Root Privilege Verification:</strong> The script checks that it’s run as root.</li>
-  <li><strong>ACPI Configuration:</strong> Ensures <code>/etc/modprobe.d/thinkpad_acpi.conf</code> contains <code>fan_control=1</code> (with backup creation if needed).</li>
-  <li><strong>GRUB Boot Parameter Update:</strong> Appends <code>thinkpad_acpi.fan_control=1</code> to the kernel boot parameters and runs <code>update-grub</code>.</li>
-  <li><strong>Kernel Module Management:</strong> Reloads the <code>thinkpad_acpi</code> module if possible, or advises a reboot if the module is built into the kernel.</li>
-  <li><strong>Custom Fan Control Script:</strong> Installs <code>thinkfan-ex</code> which:
-    <ul>
-      <li>Dynamically reads temperature sensor files.</li>
-      <li>Maps temperatures to discrete fan levels (0 to 7, or “level disengaged” for critical temperatures).</li>
-      <li>Supports command-line options:
-        <ul>
-          <li><code>-status</code>: Displays current fan status and sensor temperature readings.</li>
-          <li><code>-config</code>: Opens the configuration file (<code>/etc/thinkfan-extreme.conf</code>) for editing.</li>
-          <li><code>-uninstall</code>: Uninstalls the fan control setup, disables its systemd service, reverts GRUB changes, and removes bash completion.</li>
-          <li><code>-help</code> or <code>--help</code>: Shows usage information.</li>
-        </ul>
-      </li>
-    </ul>
-  </li>
-  <li><strong>Systemd Service Unit:</strong> Creates and enables <code>thinkfan-extreme.service</code> to run <code>thinkfan-ex</code> continuously at boot.</li>
-  <li><strong>Bash Completion:</strong> Installs a bash completion file for streamlined command usage.</li>
-  <li><strong>Logging:</strong> Detailed events are logged to <code>/var/log/thinkfan-extreme.log</code> for troubleshooting.</li>
-</ul>
-<h2>Requirements</h2>
-<ul>
-  <li><strong>ThinkPad ACPI Kernel Module:</strong> Must be loaded with <code>fan_control=1</code>.</li>
-  <li><strong>Root Access:</strong> Both the deployment script and the installed components require root privileges.</li>
-  <li><strong>GRUB Update:</strong> Kernel boot parameter changes will need a reboot to take effect.</li>
-</ul>
-<h2>Usage</h2>
-<p>Once installed, the custom fan control script (<code>thinkfan-ex</code>) will run as a service at boot. It continuously monitors temperature sensors and adjusts fan speeds accordingly.</p>
-<h3>Command-Line Options for <code>thinkfan-ex</code></h3>
-<ul>
-  <li>
-    <strong><code>-status</code></strong>: Display the current fan control status and sensor temperature readings.
-  </li>
-  <li>
-    <strong><code>-config</code></strong>: Open the configuration file (<code>/etc/thinkfan-extreme.conf</code>) for editing.
-  </li>
-  <li>
-    <strong><code>-uninstall</code></strong>: Uninstall <code>thinkfan-ex</code>, disable its systemd service, revert GRUB changes, and remove bash completion.
-  </li>
-  <li>
-    <strong><code>-help</code> or <code>--help</code></strong>: Show usage information and available options.
-  </li>
-</ul>
-<h2>Uninstallation</h2>
-<p>To remove the fan control setup, run:</p>
-<pre><code>sudo thinkfan-ex -uninstall</code></pre>
-<p>This command will:</p>
-<ul>
-  <li>Stop and disable the systemd service.</li>
-  <li>Remove the <code>thinkfan-ex</code> script and bash completion.</li>
-  <li>Revert the GRUB boot parameter changes.</li>
-</ul>
-<h2>Logging</h2>
-<p>All events during deployment are logged to <code>/var/log/thinkfan-extreme.log</code>. Check this file for troubleshooting or to verify successful configuration. To continuously monitor the log, use:</p>
-<pre><code>tail -f /var/log/thinkfan-extreme.log</code></pre>
+Run it once at idle, then again after several minutes at full load
+(`stress -c $(nproc)`) so the heatsink has saturated. Spread your thresholds across
+the range between those two figures, and put `CRITICAL_TEMP` well above the
+sustained load temperature — it should be reachable only when something has gone
+wrong.
 
-<h2>Notes</h2>
-<ul>
-  <li>
-    <strong>Module Reloading:</strong> If the <code>thinkpad_acpi</code> module is built into your kernel (and thus cannot be reloaded), a reboot is required for configuration changes to take effect.
-  </li>
-  <li>
-    <strong>Fan Control Verification:</strong> After configuration, the script displays current fan settings from <code>/proc/acpi/ibm/fan</code>.
-  </li>
-  <li>
-    <strong>Restoring automatic control:</strong> <code>thinkfan-ex</code> restores <code>level auto</code> via an <code>EXIT</code> trap, but <code>-uninstall</code> exits before that trap is installed, and a <code>SIGKILL</code> will not run it either. If the fan is left at a fixed level or disengaged, restore it manually:
-    <pre><code>echo "level auto" | sudo tee /proc/acpi/ibm/fan</code></pre>
-    For unattended machines, consider arming the EC watchdog so firmware reclaims control if the daemon dies:
-    <pre><code>echo "watchdog 120" | sudo tee /proc/acpi/ibm/fan</code></pre>
-  </li>
-</ul>
+Printing `$z/type` alongside the temperature matters, because the daemon takes the
+maximum across all sensors. A zone like `pch_skylake` or `iwlwifi_1` running hot has
+nothing to do with your CPU, but it will still drive the fan curve.
 
-<h2>Changelog</h2>
-<h3>1.1</h3>
-<ul>
-  <li><strong>Fixed:</strong> an empty sensor read (some <code>hwmon</code> nodes return nothing while <code>cat</code> still exits 0) produced an empty value that aborted the control loop under <code>set -e</code>.</li>
-  <li><strong>Fixed:</strong> reading <code>/sys/module/thinkpad_acpi/parameters/fan_control</code> aborted the installer when <code>thinkpad_acpi</code> is built into the kernel rather than loaded as a module.</li>
-  <li><strong>Fixed:</strong> the default fan command was <code>auto</code>, which <code>/proc/acpi/ibm/fan</code> rejects; the valid command is <code>level auto</code>.</li>
-  <li><strong>Fixed:</strong> a <code>grep</code> miss while reading the current level aborted the loop under <code>set -e</code>.</li>
-  <li><strong>Fixed:</strong> <code>local error_code=$?</code> always captured 0, since <code>local</code> resets <code>$?</code>.</li>
-  <li><strong>Fixed:</strong> <code>systemctl enable</code> armed the service for the next boot but never started it; now <code>enable --now</code>.</li>
-  <li><strong>Fixed:</strong> the fallback configuration used when the config file fails its syntax check no longer diverges from the shipped defaults.</li>
-  <li><strong>Added:</strong> <code>HYSTERESIS</code>, preventing the fan level from flapping on every threshold crossing.</li>
-  <li><strong>Changed:</strong> redundant writes are skipped, so the log records real level changes instead of one entry per poll.</li>
-  <li><strong>Changed:</strong> level sorting uses <code>mapfile</code> with <code>printf | sort</code> instead of an <code>IFS</code>-prefixed array assignment.</li>
-</ul>
+MSR `0x1b1` (`IA32_PACKAGE_THERM_STATUS`) tells you what's actually limiting the
+machine:
 
-<h2>License</h2>
-<p>This project is licensed under the MIT License.</p>
-<h2>Author</h2>
-<p>Bruno Bellizzi Grande</p>
-<p><em>Last updated: August 1, 2026</em></p>
+| Bit | Meaning |
+|---|---|
+| 0 | Currently thermally throttling |
+| 2 | PROCHOT# asserted |
+| 10 | Currently power limited |
+| 16–22 | Degrees below TjMax |
+
+If bit 10 is set and bit 0 is clear, you're power limited rather than thermally
+limited — a more aggressive fan curve will buy you noise and nothing else.
+
+## Safety
+
+`thinkfan-ex` restores `level auto` through an `EXIT` trap, which covers normal
+shutdown and `systemctl stop`. It does not cover everything:
+
+- `-uninstall` exits before that trap is ever installed
+- `SIGKILL` (including the OOM killer) doesn't run traps at all
+
+In either case the fan stays at whatever level was last written. If you've been
+running `disengaged` that's merely loud, but if it was sitting at a low level on a
+hot CPU it's a real risk. Restore it by hand:
+
+```bash
+echo "level auto" | sudo tee /proc/acpi/ibm/fan
+```
+
+For unattended machines, arm the EC watchdog so firmware reclaims control if the
+daemon stops writing:
+
+```bash
+echo "watchdog 120" | sudo tee /proc/acpi/ibm/fan
+```
+
+## Logging
+
+Deployment is logged to `/var/log/thinkfan-extreme-fix.log`; the daemon logs to
+`/var/log/thinkfan-extreme.log`, truncated on each service start. Only real level
+changes are recorded, not one line per poll.
+
+```bash
+tail -f /var/log/thinkfan-extreme.log
+journalctl -u thinkfan-extreme -f
+```
+
+## Troubleshooting
+
+**`status: disabled` in the fan output.** The boot parameter isn't active. Confirm
+`thinkpad_acpi.fan_control=1` is in `/proc/cmdline`; if it isn't, check
+`/etc/default/grub` and rerun `update-grub`, then reboot.
+
+**Service restarts in a loop.** Check `journalctl -u thinkfan-extreme -b`. The usual
+cause is a config file that passes its syntax check but sets nonsense values.
+
+**Fan won't leave `disengaged`.** Some sensor is reading above `CRITICAL_TEMP`.
+Run `sudo thinkfan-ex -status` and look for an outlier — it's often a non-CPU zone.
+
+**Levels change every few seconds.** `HYSTERESIS` is smaller than your temperature
+swing. Raise it, or widen the gaps between thresholds.
+
+## Uninstallation
+
+```bash
+sudo thinkfan-ex -uninstall
+echo "level auto" | sudo tee /proc/acpi/ibm/fan
+```
+
+This stops and disables the service, removes the daemon and bash completion, and
+reverts the GRUB parameter. The second command is not optional — see [Safety](#safety).
+
+The config file and logs are left in place; remove them yourself if you want a clean
+slate:
+
+```bash
+sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
+```
+
+## Changelog
+
+### 1.1
+
+**Fixed**
+
+- An empty sensor read aborted the control loop under `set -e`. Some `hwmon` nodes
+  return nothing while `cat` still exits 0, so the `|| echo 0` fallback never fired
+  and the resulting empty value broke the numeric comparison.
+- Reading `/sys/module/thinkpad_acpi/parameters/fan_control` aborted the installer
+  when `thinkpad_acpi` is built into the kernel rather than loaded as a module.
+- The default fan command was `auto`, which `/proc/acpi/ibm/fan` rejects. The valid
+  command is `level auto`.
+- A `grep` miss while reading the current level aborted the loop under `set -e`.
+- `local error_code=$?` always captured 0, because `local` resets `$?`.
+- `systemctl enable` armed the service for the next boot but never started it. Now
+  `enable --now`.
+- The fallback configuration used when the config file fails its syntax check no
+  longer diverges from the shipped defaults.
+
+**Added**
+
+- `HYSTERESIS`, preventing the fan level from flapping on every threshold crossing.
+
+**Changed**
+
+- Redundant writes are skipped, so the log records real level changes instead of one
+  entry per poll.
+- Level sorting uses `mapfile` with `printf | sort` instead of an `IFS`-prefixed
+  array assignment.
+- Default thresholds retuned for a machine with healthy thermals.
+
+### 1.0
+
+Initial release.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+## Author
+
+Bruno Bellizzi Grande
+
+*Last updated: August 1, 2026*
