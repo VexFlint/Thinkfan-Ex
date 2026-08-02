@@ -35,39 +35,65 @@ This script automates the deployment and configuration of a custom fan control s
     <strong>Reboot the System:</strong> A reboot is recommended to ensure all kernel and module changes are applied.
   </li>
 </ol>
-<h2>Exemple of config file</h2>
-<pre><font color="#06989A"># Exemple of how to set up your config file</font>
+<h2>Example of config file</h2>
+<p>Defaults live in <code>/etc/thinkfan-extreme.conf</code>. Every temperature is in
+millidegrees Celsius (<code>70000</code> = 70&deg;C).</p>
+<pre><code># Critical temperature. Above this the fan goes to "level disengaged",
+# which bypasses the EC's RPM ceiling and runs the fan flat out.
+# Set this as a genuine emergency rung, not a normal operating point:
+# compare it against your CPU's TjMax (usually 100C), not against idle temps.
+CRITICAL_TEMP=90000
 
-<font color="#06989A"># Critical temperature in millidegrees Celsius (75000 = 75°C)</font>
-<font color="#06989A">#CRITICAL_TEMP=75000</font>
+# Downshift stickiness, in millidegrees. See "Hysteresis" below.
+# Must be >= the gap between adjacent thresholds, or levels will flap.
+HYSTERESIS=5000
 
-<font color="#06989A"># Temperature thresholds for each fan level (in millidegrees Celsius).</font>
-<font color="#06989A">#declare -A level_threshold</font>
-<font color="#06989A">#level_threshold[0]=40000</font>
-<font color="#06989A">#level_threshold[1]=45000</font>
-<font color="#06989A">#level_threshold[2]=50000</font>
-<font color="#06989A">#level_threshold[3]=55000</font>
-<font color="#06989A">#level_threshold[4]=60000</font>
-<font color="#06989A">#level_threshold[5]=65000</font>
-<font color="#06989A">#level_threshold[6]=70000</font>
-<font color="#06989A">#level_threshold[7]=75000</font>
-
-
-
-<font color="#06989A"># Critical temperature in millidegrees Celsius (76000 = 76°C)</font>
-CRITICAL_TEMP=76000
-
-<font color="#06989A"># Temperature thresholds for each fan level (in millidegrees Celsius).</font>
+# Temperature thresholds for each fan level.
 declare -A level_threshold
-level_threshold[0]=40000
-level_threshold[1]=45000
-level_threshold[2]=50000
-level_threshold[3]=55000
-level_threshold[5]=65000
-level_threshold[6]=70000
-level_threshold[7]=76000
+level_threshold[0]=45000
+level_threshold[1]=50000
+level_threshold[2]=55000
+level_threshold[3]=60000
+level_threshold[4]=65000
+level_threshold[5]=70000
+level_threshold[6]=78000
+level_threshold[7]=85000
+</code></pre>
+<p>Levels may be omitted &mdash; the ladder is built from whichever keys you define,
+so skipping <code>level_threshold[4]</code> simply means level 4 is never used.</p>
 
-</pre>
+<h2>Hysteresis</h2>
+<p>A bare threshold is a single line: crossed going up, crossed going down, at the
+same temperature. Because CPU temperature jitters by several degrees between reads,
+any wobble sitting on a threshold makes the fan change level every polling interval &mdash;
+audible pulsing and needless wear.</p>
+<p><code>HYSTERESIS</code> splits that one line into two: a higher line to move
+<em>up</em> a level, a lower line to fall back <em>down</em>. At level 5 with a
+threshold of <code>70000</code> and <code>HYSTERESIS=5000</code>, the fan enters
+level 5 at 70&deg;C but will not drop to level 4 until the temperature actually
+reaches 65&deg;C.</p>
+<p>Upward transitions are never delayed. Adding cooling quickly is safe; removing it
+slowly is safe; the reverse would not be.</p>
+<p>Pick a value at least as large as your typical temperature swing between polls,
+otherwise the jitter still crosses both lines and the level flaps anyway. Larger
+values make the fan quieter and lazier, but slower to wind down after a load ends.</p>
+
+<h2>Tuning to your machine</h2>
+<p>The shipped defaults are a starting point, not a universal curve. To calibrate:</p>
+<pre><code>{ for z in /sys/class/thermal/thermal_zone*/; do echo "$z $(cat $z/type) $(cat $z/temp)"; done
+  cat /proc/acpi/ibm/fan
+  grep MHz /proc/cpuinfo
+  sudo rdmsr 0x1b1; } 2>&amp;1 | tee ~/thermal-snapshot.txt
+</code></pre>
+<p>Run it once at idle and again after several minutes at full load
+(<code>stress -c $(nproc)</code>), so the heatsink has saturated. Set the thresholds
+across the range between those two figures, and set <code>CRITICAL_TEMP</code>
+well above your sustained load temperature.</p>
+<p>Bit 0 of MSR <code>0x1b1</code> tells you whether the package is thermally
+throttling; bit 10 tells you whether it is merely power limited. A machine that is
+power limited rather than thermally limited does not benefit from a more aggressive
+fan curve.</p>
+
 <h1>Thinkfan-Extreme Deep Dive</h1>
 <p>This Bash script automates the deployment and configuration of a custom fan control solution for ThinkPad laptops. It ensures proper ACPI settings and installs a custom fan control script (<code>thinkfan-ex</code>), a systemd service unit, and bash completion for enhanced command-line usability.</p>
 <h2>Features</h2>
@@ -138,10 +164,31 @@ level_threshold[7]=76000
   <li>
     <strong>Fan Control Verification:</strong> After configuration, the script displays current fan settings from <code>/proc/acpi/ibm/fan</code>.
   </li>
+  <li>
+    <strong>Restoring automatic control:</strong> <code>thinkfan-ex</code> restores <code>level auto</code> via an <code>EXIT</code> trap, but <code>-uninstall</code> exits before that trap is installed, and a <code>SIGKILL</code> will not run it either. If the fan is left at a fixed level or disengaged, restore it manually:
+    <pre><code>echo "level auto" | sudo tee /proc/acpi/ibm/fan</code></pre>
+    For unattended machines, consider arming the EC watchdog so firmware reclaims control if the daemon dies:
+    <pre><code>echo "watchdog 120" | sudo tee /proc/acpi/ibm/fan</code></pre>
+  </li>
+</ul>
+
+<h2>Changelog</h2>
+<h3>1.1</h3>
+<ul>
+  <li><strong>Fixed:</strong> an empty sensor read (some <code>hwmon</code> nodes return nothing while <code>cat</code> still exits 0) produced an empty value that aborted the control loop under <code>set -e</code>.</li>
+  <li><strong>Fixed:</strong> reading <code>/sys/module/thinkpad_acpi/parameters/fan_control</code> aborted the installer when <code>thinkpad_acpi</code> is built into the kernel rather than loaded as a module.</li>
+  <li><strong>Fixed:</strong> the default fan command was <code>auto</code>, which <code>/proc/acpi/ibm/fan</code> rejects; the valid command is <code>level auto</code>.</li>
+  <li><strong>Fixed:</strong> a <code>grep</code> miss while reading the current level aborted the loop under <code>set -e</code>.</li>
+  <li><strong>Fixed:</strong> <code>local error_code=$?</code> always captured 0, since <code>local</code> resets <code>$?</code>.</li>
+  <li><strong>Fixed:</strong> <code>systemctl enable</code> armed the service for the next boot but never started it; now <code>enable --now</code>.</li>
+  <li><strong>Fixed:</strong> the fallback configuration used when the config file fails its syntax check no longer diverges from the shipped defaults.</li>
+  <li><strong>Added:</strong> <code>HYSTERESIS</code>, preventing the fan level from flapping on every threshold crossing.</li>
+  <li><strong>Changed:</strong> redundant writes are skipped, so the log records real level changes instead of one entry per poll.</li>
+  <li><strong>Changed:</strong> level sorting uses <code>mapfile</code> with <code>printf | sort</code> instead of an <code>IFS</code>-prefixed array assignment.</li>
 </ul>
 
 <h2>License</h2>
 <p>This project is licensed under the MIT License.</p>
 <h2>Author</h2>
 <p>Bruno Bellizzi Grande</p>
-<p><em>Last updated: March 10, 2025</em></p>
+<p><em>Last updated: August 1, 2026</em></p>
