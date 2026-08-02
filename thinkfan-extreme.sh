@@ -16,7 +16,7 @@
 # Requirements:
 #   - The thinkpad_acpi kernel module must be loaded with fan_control=1.
 #   - This script (and the installed thinkfan-ex script) must be run as root.
-# Version: 1.2
+# Version: 1.2.1
 # Author: Bruno Bellizzi Grande
 # Date: 2026-08-01
 
@@ -158,12 +158,23 @@ SMOOTH_SAMPLES=5
 # Costs one extra poll of reaction time. Set to 1 for immediate upshifts.
 UP_CONFIRM=2
 
+# Which sensors drive the curve, space separated, globs allowed. The default is
+# the CPU package and cores only. Widen it if something else shares the
+# heatsink, but do not glob every hwmon: an unrelated hot device would then
+# drive the fan. Run 'thinkfan-ex -status' to see what each path reads.
+#SENSOR_PATTERNS="/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input /sys/class/thermal/thermal_zone*/temp"
+
 # Seconds of silence after which the embedded controller takes fan control back.
 # This is what protects you if the daemon is killed outright. Range 1-120,
 # or 0 to disable. Leave it on unless you have a reason not to.
 WATCHDOG_TIMEOUT=120
 
 # Temperature thresholds for each fan level.
+#
+# A ventoinha entra no nivel 1 em level_threshold[1] e volta para o controle do
+# firmware em level_threshold[1] - HYSTERESIS. Com 51000 e 6000 isso da liga em
+# 51C, desliga em 45C. Para mudar onde ela para, mova o threshold, nao invente
+# um piso separado: um piso sem banda morta faz o nivel oscilar.
 #
 # Levels you omit are simply never used. That matters, because most ThinkPads
 # have fewer real fan speeds than they have levels -- on the T480 these were
@@ -182,11 +193,11 @@ WATCHDOG_TIMEOUT=120
 # Giving two thresholds to one physical speed just makes the fan change level
 # without changing sound. Measure yours, then keep one threshold per real speed.
 declare -A level_threshold
-level_threshold[1]=45000
-level_threshold[2]=52000
-level_threshold[3]=58000
-level_threshold[5]=65000
-level_threshold[6]=72000
+level_threshold[1]=51000
+level_threshold[2]=57000
+level_threshold[3]=63000
+level_threshold[5]=69000
+level_threshold[6]=76000
 EOC
 )
 
@@ -203,11 +214,11 @@ if ! bash -n "$CONFIG_FILE" 2>/dev/null; then
     SMOOTH_SAMPLES=5
     UP_CONFIRM=2
     declare -A level_threshold
-    level_threshold[1]=45000
-    level_threshold[2]=52000
-    level_threshold[3]=58000
-    level_threshold[5]=65000
-    level_threshold[6]=72000
+    level_threshold[1]=51000
+    level_threshold[2]=57000
+    level_threshold[3]=63000
+    level_threshold[5]=69000
+    level_threshold[6]=76000
 else
     . "$CONFIG_FILE"
     CONFIG_SOURCE="$CONFIG_FILE"
@@ -340,12 +351,21 @@ if [ "$#" -gt 0 ]; then
                 exit 1
             fi
 
+            # Same sensors the curve uses, so the probe's safety limits watch
+            # whatever SENSOR_PATTERNS says matters on this machine.
             probe_temp() {
-                local hottest=0 v
-                for f in /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input; do
-                    [ -f "$f" ] || continue
-                    v=$(cat "$f" 2>/dev/null || true); v=${v:-0}
-                    [ "$v" -gt "$hottest" ] && hottest=$v
+                local hottest=0 v pats
+                if [ -n "${SENSOR_PATTERNS:-}" ]; then
+                    read -ra pats <<< "$SENSOR_PATTERNS"
+                else
+                    pats=( "/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input" )
+                fi
+                for pat in "${pats[@]}"; do
+                    for f in $pat; do
+                        [ -f "$f" ] || continue
+                        v=$(cat "$f" 2>/dev/null || true); v=${v:-0}
+                        [ "$v" -gt "$hottest" ] && hottest=$v
+                    done
                 done
                 echo "$hottest"
             }
@@ -614,9 +634,16 @@ set_fan_level() {
 get_current_temp() {
     local temp=0
     local sensor_files=()
-    local patterns=( "/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input" \
-                     "/sys/class/hwmon/hwmon*/temp*_input" \
-                     "/sys/class/thermal/thermal_zone*/temp" )
+    # Only CPU sensors by default. Globbing every hwmon in the system means an
+    # unrelated device - wifi, NVMe, PCH, charger - can be the hottest reading
+    # and end up driving a CPU fan. Override SENSOR_PATTERNS in the config file
+    # to widen this, e.g. to include a discrete GPU sharing the heatsink.
+    local patterns
+    if [ -n "${SENSOR_PATTERNS:-}" ]; then
+        read -ra patterns <<< "$SENSOR_PATTERNS"
+    else
+        patterns=( "/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input" )
+    fi
     for pattern in "${patterns[@]}"; do
         for file in $pattern; do
             if [ -f "$file" ]; then
@@ -657,7 +684,6 @@ SMOOTH_SAMPLES=${SMOOTH_SAMPLES:-5}
 # Requiring two agreeing readings costs one extra poll of reaction time and
 # removes that entirely. Set to 1 for the old immediate behaviour.
 UP_CONFIRM=${UP_CONFIRM:-2}
-
 mapfile -t sorted_levels < <(printf '%s\n' "${!level_threshold[@]}" | sort -rn)
 temp_history=()
 last_level=""
@@ -687,7 +713,12 @@ while true; do
         fi
     done
 
-    if (( current_temp >= CRITICAL_TEMP )); then
+    # Leaving disengaged needs the same deadband as any other level, or a
+    # temperature sitting on CRITICAL_TEMP toggles it every few seconds.
+    crit=$CRITICAL_TEMP
+    [ "$last_level" = "disengaged" ] && crit=$(( CRITICAL_TEMP - HYSTERESIS ))
+
+    if (( current_temp >= crit )); then
         desired_level="level disengaged"
         last_level="disengaged"
     elif ! [[ "$last_level" =~ ^[0-9]+$ ]]; then

@@ -96,6 +96,11 @@ Two caveats worth knowing before you tune:
   A figure marked `*` never went steady inside the time limit and is approximate.
   Levels that share an RPM want one threshold between them, not several.
 
+  The probe's temperature checks read the same sensors as the curve, so widening
+  `SENSOR_PATTERNS` widens what its safety limits watch. `-status` deliberately
+  does not: it lists every sensor on the machine, which is how you find out that
+  something unexpected is running hot.
+
   The probe refuses to run if the service is active or the CPU is above 65 °C,
   aborts early if the CPU passes 80 °C, and restores automatic control on exit or
   interrupt. Expect two to four minutes, and it is audible.
@@ -187,6 +192,8 @@ The daemon starts at boot and needs no interaction. When you do want to poke at 
 
 | Command | Effect |
 |---|---|
+| `./sensors.sh` | Every thermal sensor with its name, label and reading |
+| `sudo ./powerwatch.sh` | Live package/core/iGPU power, clocks, temperature, throttle reasons |
 | `sudo ./fanbench.sh` | Interactive bench: live RPM, switch levels by keypress |
 | `sudo thinkfan-ex -check` | Capability report and verdict for this machine |
 | `sudo thinkfan-ex -probe` | Measure real RPM at each level (stop the service first) |
@@ -229,11 +236,11 @@ WATCHDOG_TIMEOUT=120
 
 # Thresholds. Omitted levels are never used - see "Prune duplicate levels".
 declare -A level_threshold
-level_threshold[1]=45000
-level_threshold[2]=52000
-level_threshold[3]=58000
-level_threshold[5]=65000
-level_threshold[6]=72000
+level_threshold[1]=51000
+level_threshold[2]=57000
+level_threshold[3]=63000
+level_threshold[5]=69000
+level_threshold[6]=76000
 ```
 
 Levels may be omitted. The ladder is built from whichever keys you define, so
@@ -320,6 +327,67 @@ it back as `disengaged`.
 
 Fewer, wider bands also let `HYSTERESIS` do its job: a deadband only damps flapping
 if it is larger than the gap between neighbouring thresholds.
+
+### Which sensors drive the curve
+
+`SENSOR_PATTERNS` decides which sensor files are read. The default is the CPU
+package and cores only, and that default matters: the curve uses the **hottest**
+reading it finds, so globbing every `hwmon` in the system lets an unrelated device
+command a CPU fan.
+
+This is not hypothetical. On the reference T480 the NVMe SSD idles hotter than the
+CPU, and while it was included the fan never dropped below level 1 even with the
+CPU at 36 °C:
+
+| hwmon | Name | Idle | What it is | In the curve? |
+|---|---|---|---|---|
+| hwmon9 | `coretemp` | 34-36 °C | CPU package and 4 cores | **yes** — the target |
+| hwmon8 | `thinkpad` | 35 / 30 °C | EC sensors, labelled `CPU` and `GPU` | optional, see below |
+| hwmon1 | `acpitz` | 35 °C | ACPI zone, mirrors the CPU | no — redundant |
+| hwmon4 | `nvme` | **41.8 °C** | SSD, `Sensor 1` runs hottest | no — was hijacking the fan |
+| hwmon7 | `pch_skylake` | 32 °C | Chipset | no |
+| hwmon10 | `iwlwifi_1` | 30 °C | Wi-Fi | no |
+| hwmon0, 2, 3, 5, 6 | `AC` `BAT0` `BAT1` `ucsi_*` | — | Charger, batteries, USB-C | no, no `temp*_input` |
+
+The `thermal_zone*` files are the same silicon through a different interface:
+`zone0` is `acpitz`, `zone1` is the PCH, `zone5` is Wi-Fi, `zone6` is
+`x86_pkg_temp`. Adding them alongside `coretemp` gains nothing.
+
+List your own with `./sensors.sh`, which prints every sensor with its name and
+label in one table, or with `thinkfan-ex -status`, which prints every sensor path
+and its reading regardless of which ones the curve uses.
+
+**Excluding a device does not leave it unprotected.** An NVMe drive throttles
+itself, and a CPU fan barely reaches it anyway. Only widen the patterns for
+something that genuinely shares the heatsink:
+
+```bash
+# also follow the discrete GPU, via the EC's labelled sensors
+SENSOR_PATTERNS="/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input /sys/class/hwmon/hwmon8/temp[12]_input"
+```
+
+Note the `temp[12]` — the EC exposes eight sensors and six of them read 0, which
+would be harmless here but is worth being deliberate about. `hwmon` numbering is
+not stable across boots, so prefer a path under `/sys/devices/platform/` where one
+exists.
+
+### Where the fan stops
+
+There is no separate "minimum temperature" setting, and that is deliberate. The fan
+returns to firmware control at `level_threshold[<lowest>] - HYSTERESIS`, so the
+lowest threshold sets both ends:
+
+```
+level_threshold[1]=51000   HYSTERESIS=6000
+
+    fan starts at 51 °C
+    fan stops  at 45 °C
+```
+
+To change where it stops, move the lowest threshold. Do not add a floor that cuts
+straight to `auto` below some temperature: a floor has no deadband, so a
+temperature resting on it toggles the fan every poll. Tested on a trace hovering
+around 45 °C, a bare floor produced 35 level changes where the deadband produced 1.
 
 ### Tuning to your machine
 
@@ -427,6 +495,25 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
 ```
 
 ## Changelog
+
+### 1.2.1
+
+**Fixed**
+
+- Entering and leaving `disengaged` had no deadband, so a temperature resting on
+  `CRITICAL_TEMP` toggled it every few seconds. It now uses the same `HYSTERESIS`
+  as every other level.
+
+**Changed**
+
+- Default thresholds re-spaced so the fan starts at 51 °C and stops at 45 °C,
+  keeping a full `HYSTERESIS` deadband at the bottom of the ladder.
+
+**Added**
+
+- `SENSOR_PATTERNS`, honoured by both the control loop and `-probe`. The curve was driven by the hottest reading across every
+  hwmon in the system, so an unrelated device - wifi, NVMe, PCH - could command
+  a CPU fan. The default is now the CPU package and cores only.
 
 ### 1.2
 
