@@ -714,6 +714,24 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
 
 ## Changelog
 
+### 1.3.1
+
+Documentation only. The daemon and installer behave exactly as in 1.3.
+
+**Added**
+
+- Installation now documents installing from a [release](https://github.com/VexFlint/Thinkfan-Ex/releases)
+  as well as from a clone, including the tarball URL and the directory name
+  GitHub produces. It also warns that the standalone `thinkfan-extreme.sh`
+  asset installs the daemon alone: it copies the companion tools only if they
+  sit beside it, so a single-file download leaves nothing else on `PATH`.
+
+**Fixed**
+
+- The clone URL and `chargewatch.sh`'s header comment pointed at
+  `BrunoGrande/Thinkfan-Ex`, which resolves only through GitHub's rename
+  redirect. Both now point at `VexFlint/Thinkfan-Ex` directly.
+
 ### 1.3
 
 **Added**
