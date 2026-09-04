@@ -1,5 +1,7 @@
 #!/bin/bash
 # sensors.sh - todos os sensores termicos em uma tabela so.
+# Instalado como 'thermalsensors' em /usr/local/bin: 'sensors' colidiria com o
+# binario do lm_sensors.
 printf '%-13s %-26s %-9s %s\n' HWMON NOME LEITURA CAMINHO
 printf '%.0s-' {1..96}; echo
 for h in /sys/class/hwmon/hwmon*/; do

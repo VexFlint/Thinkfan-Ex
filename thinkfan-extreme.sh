@@ -11,7 +11,9 @@
 #      maps temperatures to fan levels, and writes to /proc/acpi/ibm/fan using proper quoting.
 #   5. Creates a systemd service unit file to run thinkfan-ex as a service.
 #   6. Installs a bash completion file so that autocomplete is available for thinkfan-ex options.
-#   7. Prints a reminder to reboot.
+#   7. Installs the companion tools (powerwatch, thermalsensors, fanbench, chargewatch)
+#      into /usr/local/bin so they are on PATH like the daemon itself.
+#   8. Prints a reminder to reboot.
 #
 # Requirements:
 #   - The thinkpad_acpi kernel module must be loaded with fan_control=1.
@@ -27,6 +29,20 @@ THINKFAN_EX_SCRIPT="/usr/local/bin/thinkfan-ex"
 ACPI_CONF="/etc/modprobe.d/thinkpad_acpi.conf"
 SYSTEMD_UNIT="/etc/systemd/system/thinkfan-extreme.service"
 COMPLETION_FILE="/etc/bash_completion.d/thinkfan-ex"
+BIN_DIR="/usr/local/bin"
+# Where this installer lives, so the companion scripts can be found next to it
+# regardless of the directory it was invoked from.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# Companion tools, as "source file:installed name". They are installed under
+# names without the .sh suffix; sensors.sh becomes "thermalsensors" because
+# plain "sensors" would shadow the lm_sensors binary of that name, since
+# /usr/local/bin precedes /usr/bin on PATH.
+COMPANION_TOOLS=(
+    "powerwatch.sh:powerwatch"
+    "sensors.sh:thermalsensors"
+    "fanbench.sh:fanbench"
+    "chargewatch.sh:chargewatch"
+)
 fan_control_value=$(cat /sys/module/thinkpad_acpi/parameters/fan_control 2>/dev/null || echo "unknown")
 
 # Log event function
@@ -124,7 +140,8 @@ cat > "$THINKFAN_EX_SCRIPT" << 'EOF'
 # Additionally, this script supports command-line options:
 #   -status   : Display current fan status and temperature readings.
 #   -uninstall: Remove the thinkfan-ex script, disable its systemd service,
-#               revert the GRUB boot parameter change, and remove the bash completion file.
+#               revert the GRUB boot parameter change, remove the bash completion file,
+#               and remove the companion tools installed alongside it.
 #
 # Requirements:
 #   - thinkpad_acpi must be loaded with fan_control=1.
@@ -558,6 +575,11 @@ if [ "$#" -gt 0 ]; then
             rm -f /etc/systemd/system/thinkfan-extreme.service
             systemctl daemon-reload
             rm -f /usr/local/bin/thinkfan-ex
+            # Companion tools installed alongside the daemon.
+            rm -f /usr/local/bin/powerwatch \
+                  /usr/local/bin/thermalsensors \
+                  /usr/local/bin/fanbench \
+                  /usr/local/bin/chargewatch
             # Revert the boot parameter change, whichever bootloader got it.
             GRUB_CONF="/etc/default/grub"
             LIMINE_CONF="/etc/default/limine"
@@ -584,7 +606,7 @@ if [ "$#" -gt 0 ]; then
             echo "  -probe    : Measure real RPM at each fan level. Spins the fan, ~2 min."
             echo "  -status   : Display current fan status and sensor temperature readings."
             echo "  -config   : Create or edit the config file at \$CONFIG_FILE."
-            echo "  -uninstall: Uninstall thinkfan-ex, disable its systemd service, revert GRUB changes, and remove bash completion."
+            echo "  -uninstall: Uninstall thinkfan-ex and its companion tools, disable its systemd service, revert GRUB changes, and remove bash completion."
             exit 0
             ;;
         *)
@@ -854,6 +876,24 @@ EOF
 
 chmod +x "$COMPLETION_FILE"
 log_event "Installed bash completion file to $COMPLETION_FILE."
+
+# Install the companion tools alongside the daemon. They are standalone and
+# read-only; putting them on PATH only saves the caller a cd into the clone.
+# A missing file is not fatal -- someone may have fetched thinkfan-extreme.sh
+# on its own rather than cloning the repo.
+for tool in "${COMPANION_TOOLS[@]}"; do
+    src="$SCRIPT_DIR/${tool%%:*}"
+    dest="$BIN_DIR/${tool##*:}"
+    if [ -f "$src" ]; then
+        # Non-fatal on purpose: set -e is in force, and a convenience copy
+        # failing must not abort the run before the service is started below.
+        install -m 755 "$src" "$dest" \
+            && log_event "Installed $(basename "$src") to $dest." \
+            || log_event "Warning: could not install $(basename "$src") to $dest."
+    else
+        log_event "Skipping $(basename "$src"): not found next to this installer."
+    fi
+done
 
 # Reload systemd daemon and enable the service.
 systemctl daemon-reload
