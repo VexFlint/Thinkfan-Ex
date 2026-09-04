@@ -141,8 +141,15 @@ FAN_CONTROL_FILE="/proc/acpi/ibm/fan"
 LOG_FILE="/var/log/thinkfan-extreme.log"
 
 # Log event function: defined early for use in configuration debugging.
+# The log file is root-owned (the daemon runs as root under systemd), but
+# -help/-status/-config are documented as usable without sudo, and config
+# loading below calls this unconditionally before any command is dispatched.
+# A permission-denied append must not kill the whole invocation under set -e.
 log_event() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+    # 2>/dev/null on the echo itself is too late: bash reports a failed `>>`
+    # open to stderr before that redirection is even applied, left to right.
+    # Wrapping in a group redirects the whole thing's stderr first.
+    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; } 2>/dev/null || true
 }
 
 # === Configuration File Handling ===
