@@ -59,15 +59,36 @@ else
 fi
 
 # Ensure the kernel boot parameter is set for a permanent configuration.
+# GRUB and Limine are the two we know how to edit; anything else (systemd-boot,
+# rEFInd, ...) falls through to the "no supported bootloader" branch below.
+# $ACPI_CONF above is the real prerequisite and is already in place either
+# way -- this boot-parameter step is belt-and-suspenders for initramfs setups
+# that don't reliably pick up modprobe.d options before thinkpad_acpi loads.
 GRUB_CONF="/etc/default/grub"
-if grep -q "thinkpad_acpi.fan_control=1" "$GRUB_CONF"; then
-    log_event "GRUB configuration already contains thinkpad_acpi.fan_control=1."
+LIMINE_CONF="/etc/default/limine"
+if [ -f "$GRUB_CONF" ]; then
+    if grep -q "thinkpad_acpi.fan_control=1" "$GRUB_CONF"; then
+        log_event "GRUB configuration already contains thinkpad_acpi.fan_control=1."
+    else
+        log_event "Adding thinkpad_acpi.fan_control=1 to GRUB_CMDLINE_LINUX in $GRUB_CONF."
+        # Append the parameter to the existing GRUB_CMDLINE_LINUX line.
+        sed -i 's/^\(GRUB_CMDLINE_LINUX="\(.*\)\)"/\1 thinkpad_acpi.fan_control=1"/' "$GRUB_CONF"
+        log_event "Updated GRUB configuration. Running update-grub..."
+        update-grub
+    fi
+elif [ -f "$LIMINE_CONF" ] && command -v limine-update >/dev/null 2>&1; then
+    if grep -q "thinkpad_acpi.fan_control=1" "$LIMINE_CONF"; then
+        log_event "Limine configuration already contains thinkpad_acpi.fan_control=1."
+    else
+        log_event "Adding thinkpad_acpi.fan_control=1 to KERNEL_CMDLINE[default] in $LIMINE_CONF."
+        cp "$LIMINE_CONF" "${LIMINE_CONF}.bak_$(date +%Y%m%d%H%M%S)"
+        echo 'KERNEL_CMDLINE[default]+="thinkpad_acpi.fan_control=1"' >> "$LIMINE_CONF"
+        log_event "Updated Limine configuration. Running limine-update..."
+        limine-update
+    fi
 else
-    log_event "Adding thinkpad_acpi.fan_control=1 to GRUB_CMDLINE_LINUX in $GRUB_CONF."
-    # Append the parameter to the existing GRUB_CMDLINE_LINUX line.
-    sed -i 's/^\(GRUB_CMDLINE_LINUX="\(.*\)\)"/\1 thinkpad_acpi.fan_control=1"/' "$GRUB_CONF"
-    log_event "Updated GRUB configuration. Running update-grub..."
-    update-grub
+    log_event "No supported bootloader config found (checked $GRUB_CONF and $LIMINE_CONF)."
+    log_event "Skipping the persistent boot-parameter step -- $ACPI_CONF already sets fan_control=1, which is sufficient on its own. Add the kernel parameter to your bootloader by hand only if you find that setting isn't surviving reboots."
 fi
 
 # Check if thinkpad_acpi is loaded as a module.
@@ -530,12 +551,17 @@ if [ "$#" -gt 0 ]; then
             rm -f /etc/systemd/system/thinkfan-extreme.service
             systemctl daemon-reload
             rm -f /usr/local/bin/thinkfan-ex
-            # Revert GRUB boot parameter change.
+            # Revert the boot parameter change, whichever bootloader got it.
             GRUB_CONF="/etc/default/grub"
-            if grep -q "thinkpad_acpi.fan_control=1" "$GRUB_CONF"; then
+            LIMINE_CONF="/etc/default/limine"
+            if [ -f "$GRUB_CONF" ] && grep -q "thinkpad_acpi.fan_control=1" "$GRUB_CONF"; then
                 echo "Reverting GRUB configuration..."
                 sed -i 's/ thinkpad_acpi.fan_control=1//' "$GRUB_CONF"
                 update-grub
+            elif [ -f "$LIMINE_CONF" ] && grep -q "thinkpad_acpi.fan_control=1" "$LIMINE_CONF"; then
+                echo "Reverting Limine configuration..."
+                sed -i '/^KERNEL_CMDLINE\[default\]+="thinkpad_acpi\.fan_control=1"$/d' "$LIMINE_CONF"
+                command -v limine-update >/dev/null 2>&1 && limine-update
             fi
             # Remove bash completion file if exists.
             if [ -f "/etc/bash_completion.d/thinkfan-ex" ]; then
@@ -801,6 +827,10 @@ EOF
 log_event "Created systemd service unit file at $SYSTEMD_UNIT."
 
 # Create bash completion file for thinkfan-ex.
+# Not every distro ships /etc/bash_completion.d by default (e.g. Arch, even
+# with the bash-completion package installed) -- it's only auto-created on
+# first use, so make sure it exists before writing into it.
+mkdir -p "$(dirname "$COMPLETION_FILE")"
 cat > "$COMPLETION_FILE" << 'EOF'
 #!/bin/bash
 # Bash completion for thinkfan-ex
