@@ -85,13 +85,42 @@ at boot.
 
 ## Installation
 
+Two ways in. Cloning tracks `main` and is what the rest of this README assumes;
+a [release](https://github.com/VexFlint/Thinkfan-Ex/releases) gives you a pinned,
+tagged version instead.
+
+### From a clone
+
 ```bash
-git clone https://github.com/BrunoGrande/Thinkfan-Ex.git
+git clone https://github.com/VexFlint/Thinkfan-Ex.git
 cd Thinkfan-Ex
 chmod +x *.sh
 sudo ./thinkfan-extreme.sh
 sudo reboot
 ```
+
+### From a release
+
+Every release carries a source tarball. Take **Source code (tar.gz)** from the
+version you want and the steps are otherwise identical:
+
+```bash
+curl -LO https://github.com/VexFlint/Thinkfan-Ex/archive/refs/tags/v1.3.tar.gz
+tar xf v1.3.tar.gz
+cd Thinkfan-Ex-1.3
+chmod +x *.sh
+sudo ./thinkfan-extreme.sh
+sudo reboot
+```
+
+> [!NOTE]
+> Releases also attach `thinkfan-extreme.sh` on its own, which is handy for reading
+> the installer before you trust it with your fan. Running that file alone installs
+> the daemon and nothing else: it copies the companion tools only if they sit beside
+> it, so with no tree around it you get `Skipping powerwatch.sh: not found next to
+> this installer` four times and a daemon-only install. Use the tarball or the clone
+> if you want `powerwatch`, `thermalsensors`, `fanbench` and `chargewatch` on
+> `PATH`.
 
 Verify afterwards:
 
