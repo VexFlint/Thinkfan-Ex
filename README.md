@@ -105,9 +105,9 @@ Every release carries a source tarball. Take **Source code (tar.gz)** from the
 version you want and the steps are otherwise identical:
 
 ```bash
-curl -LO https://github.com/VexFlint/Thinkfan-Ex/archive/refs/tags/v1.3.tar.gz
-tar xf v1.3.tar.gz
-cd Thinkfan-Ex-1.3
+curl -LO https://github.com/VexFlint/Thinkfan-Ex/archive/refs/tags/v1.3.1.tar.gz
+tar xf v1.3.1.tar.gz
+cd Thinkfan-Ex-1.3.1
 chmod +x *.sh
 sudo ./thinkfan-extreme.sh
 sudo reboot
