@@ -3,7 +3,7 @@
 # Live RPM readout, change level by keypress, builds the observed level->RPM table.
 #
 #   sudo systemctl stop thinkfan-extreme
-#   sudo ./fanbench.sh
+#   sudo fanbench                   # or ./fanbench.sh, from the cloned repo
 #
 # Keys: 0-7 set level, a=auto, d=disengaged, f=full-speed, r=reset table, q=quit.
 
