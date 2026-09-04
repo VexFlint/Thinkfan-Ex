@@ -2,7 +2,7 @@
 #
 # chargewatch.sh — USB-C PD charge-rate monitor for ThinkPad T480 / T480s
 #
-# Companion tool for the thinkfan-ex suite (github.com/BrunoGrande/Thinkfan-Ex).
+# Companion tool for the thinkfan-ex suite (github.com/VexFlint/Thinkfan-Ex).
 # Read-only: no EC writes, no daemon, nothing to uninstall.
 #
 # WHAT THIS CAN AND CANNOT SEE
