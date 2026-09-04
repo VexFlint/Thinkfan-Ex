@@ -51,6 +51,11 @@ The installer (`thinkfan-extreme.sh`) sets up everything in one pass:
 - Installs the `thinkfan-ex` daemon to `/usr/local/bin`
 - Creates and starts `thinkfan-extreme.service`
 - Installs bash completion to `/etc/bash_completion.d/thinkfan-ex`
+- Installs the four companion tools to `/usr/local/bin` as `powerwatch`,
+  `thermalsensors`, `fanbench` and `chargewatch`, so they are on `PATH` too.
+  (`sensors.sh` becomes `thermalsensors` because plain `sensors` would shadow the
+  lm_sensors binary of that name.) They are copies: the daemon never calls them,
+  and they still run straight from the clone if you prefer
 
 The daemon (`thinkfan-ex`) then runs continuously: it reads every temperature sensor
 it can find, takes the hottest reading, maps it to a fan level through your
@@ -58,9 +63,11 @@ configured thresholds, and writes that level to `/proc/acpi/ibm/fan`. Above
 `CRITICAL_TEMP` it switches to `disengaged`.
 
 Alongside it the repo carries four standalone tools that change nothing on the
-machine: `sensors.sh` and `powerwatch.sh` for reading thermals and power,
-`fanbench.sh` for measuring your fan by hand, and `chargewatch.sh` for watching
-USB-C PD charge rate. See [Commands](#commands).
+machine: `thermalsensors` and `powerwatch` for reading thermals and power,
+`fanbench` for measuring your fan by hand, and `chargewatch` for watching
+USB-C PD charge rate. The installer puts them on `PATH`, but none of them need
+installing — run them as `./sensors.sh`, `./powerwatch.sh` and so on from the
+clone and they behave identically. See [Commands](#commands).
 
 ## Requirements
 
@@ -128,19 +135,25 @@ journalctl -u thinkfan-extreme -f           # follow it live
 ### Thermal and power tools
 
 Standalone, read-only, and safe to run at any time. None of them require the
-daemon to be installed.
+daemon to be installed — the installer copies them to `/usr/local/bin` so they are
+on `PATH`, and the same files run from the clone as `./sensors.sh`,
+`./powerwatch.sh`, `./fanbench.sh` if you would rather not install anything.
 
 | Command | Effect | Root? |
 |---|---|---|
-| `./sensors.sh` | Every thermal sensor with its hwmon, name, label and reading, in one table | no |
-| `sudo ./powerwatch.sh` | Live package/core/iGPU power, clocks, temperature, throttle reasons. Runs until Ctrl-C | yes |
-| `sudo ./powerwatch.sh 60` | The same, bounded to 60 seconds | yes |
-| `sudo ./fanbench.sh` | Interactive bench: live RPM, change level by keypress | yes |
+| `thermalsensors` | Every thermal sensor with its hwmon, name, label and reading, in one table | no |
+| `sudo powerwatch` | Live package/core/iGPU power, clocks, temperature, throttle reasons. Runs until Ctrl-C | yes |
+| `sudo powerwatch 60` | The same, bounded to 60 seconds | yes |
+| `sudo fanbench` | Interactive bench: live RPM, change level by keypress | yes |
 
-`powerwatch.sh` is only meaningful under load — idle numbers say nothing. Run it
+`sensors.sh` installs under the name `thermalsensors`, not `sensors`: `/usr/local/bin`
+comes before `/usr/bin` on `PATH`, so a binary called `sensors` there would shadow
+lm_sensors.
+
+`powerwatch` is only meaningful under load — idle numbers say nothing. Run it
 alongside `stress -c $(nproc)`.
 
-`fanbench.sh` refuses to start while `thinkfan-extreme` is active, since two things
+`fanbench` refuses to start while `thinkfan-extreme` is active, since two things
 writing fan levels would fight. Stop the service first, and note its keys:
 
 | Key | Action |  | Key | Action |
@@ -151,7 +164,7 @@ writing fan levels would fight. Stop the service first, and note its keys:
 
 Tunable through the environment: `SETTLE` (4 polls ignored after a level change).
 
-### Charge monitoring — `chargewatch.sh`
+### Charge monitoring — `chargewatch`
 
 USB-C PD charge-rate monitor for dual-battery ThinkPads. Read-only: no EC writes,
 no daemon, nothing to uninstall. See [Power and charging](#power-and-charging) for
@@ -159,12 +172,12 @@ what it can and cannot see.
 
 | Command | Effect | Root? |
 |---|---|---|
-| `./chargewatch.sh -help` | Usage and the full explanation of what's measured vs. inferred | no |
-| `./chargewatch.sh -once` | One reading, then exit | for RAPL |
-| `sudo ./chargewatch.sh` | Watch continuously — the default mode | for RAPL |
-| `sudo ./chargewatch.sh -probe` | Load every core until the adapter saturates, bounding the ceiling empirically. **Heats the machine** | yes |
-| `./chargewatch.sh -interval 5` | Seconds between samples (default 2) | — |
-| `./chargewatch.sh -csv out.csv` | Append timestamped samples as CSV | — |
+| `chargewatch -help` | Usage and the full explanation of what's measured vs. inferred | no |
+| `chargewatch -once` | One reading, then exit | for RAPL |
+| `sudo chargewatch` | Watch continuously — the default mode | for RAPL |
+| `sudo chargewatch -probe` | Load every core until the adapter saturates, bounding the ceiling empirically. **Heats the machine** | yes |
+| `chargewatch -interval 5` | Seconds between samples (default 2) | — |
+| `chargewatch -csv out.csv` | Append timestamped samples as CSV | — |
 
 Root is needed for the RAPL energy counters, which is how SoC power enters the
 estimate. Without it the battery table still prints, and the adapter estimate is
@@ -336,7 +349,7 @@ fan speeds. Adjacent levels frequently map to the same RPM, and giving each of t
 its own threshold means the fan changes level without changing sound — churn with no
 benefit.
 
-Measured on the reference T480 with `fanbench.sh`:
+Measured on the reference T480 with `fanbench`:
 
 | Level | RPM | Verdict |
 |---|---|---|
@@ -385,7 +398,7 @@ The `thermal_zone*` files are the same silicon through a different interface:
 `zone0` is `acpitz`, `zone1` is the PCH, `zone5` is Wi-Fi, `zone6` is
 `x86_pkg_temp`. Adding them alongside `coretemp` gains nothing.
 
-List your own with `./sensors.sh`, which prints every sensor with its name and
+List your own with `thermalsensors`, which prints every sensor with its name and
 label in one table, or with `thinkfan-ex -status`, which prints every sensor path
 and its reading regardless of which ones the curve uses.
 
@@ -455,13 +468,13 @@ The probe refuses to run if the service is active or the CPU is above 65 °C,
 aborts early if the CPU passes 80 °C, and restores automatic control on exit or
 interrupt. Expect two to four minutes, and it is audible.
 
-### `fanbench.sh` — the interactive bench
+### `fanbench` — the interactive bench
 
 For watching RPM live while you change levels by hand:
 
 ```bash
 sudo systemctl stop thinkfan-extreme
-sudo ./fanbench.sh
+sudo fanbench
 ```
 
 It shows the current RPM and builds a min/max/last table per level as you sit on
@@ -508,11 +521,11 @@ machine:
 
 If bit 10 is set and bit 0 is clear, you're power limited rather than thermally
 limited — a more aggressive fan curve will buy you noise and nothing else. That is
-where `powerwatch.sh` and `chargewatch.sh` take over.
+where `powerwatch` and `chargewatch` take over.
 
 ## Power and charging
 
-`chargewatch.sh` answers a different question from the rest of the suite: not how
+`chargewatch` answers a different question from the rest of the suite: not how
 hot the machine is, but how much power is reaching it. On a machine that charges
 only over USB-C PD, an underpowered adapter looks exactly like a thermal problem
 from the outside — clocks drop, and nothing in the fan logs explains it.
@@ -645,9 +658,9 @@ swing. Raise it, or widen the gaps between thresholds.
 
 **Clocks are low but the fan is quiet and temperatures are fine.** You are probably
 power limited rather than thermally limited. Check MSR bit 10 with
-[`powerwatch.sh`](#tuning-to-your-machine), and if the machine runs on USB-C PD,
+[`powerwatch`](#tuning-to-your-machine), and if the machine runs on USB-C PD,
 check what the adapter is actually delivering with
-[`chargewatch.sh`](#power-and-charging).
+[`chargewatch`](#power-and-charging).
 
 ## Uninstallation
 
@@ -656,8 +669,10 @@ sudo thinkfan-ex -uninstall
 echo "level auto" | sudo tee /proc/acpi/ibm/fan
 ```
 
-This stops and disables the service, removes the daemon and bash completion, and
-reverts the boot parameter from whichever bootloader received it. The second command
+This stops and disables the service, removes the daemon, its bash completion and the
+four companion tools from `/usr/local/bin`, and reverts the boot parameter from
+whichever bootloader received it. Your clone is untouched, so the tools remain
+available there as `./powerwatch.sh` and friends. The second command
 is not optional: `-uninstall` exits before the restore trap is installed, so the fan
 stays at whatever level was last written. See [Safety](#safety).
 
@@ -669,6 +684,17 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
 ```
 
 ## Changelog
+
+### Unreleased
+
+**Added**
+
+- The installer now copies the companion tools to `/usr/local/bin`, so
+  `powerwatch`, `thermalsensors`, `fanbench` and `chargewatch` are on `PATH`
+  like the daemon instead of only running as `./name.sh` from the clone.
+  `sensors.sh` installs as `thermalsensors`, since a `sensors` in
+  `/usr/local/bin` would shadow lm_sensors. `thinkfan-ex -uninstall` removes
+  all four.
 
 ### 1.2.1
 

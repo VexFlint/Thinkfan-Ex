@@ -1,8 +1,9 @@
 #!/bin/bash
 # powerwatch - what is actually limiting this CPU, measured rather than assumed.
 #
-#   sudo ./powerwatch.sh            # watch until Ctrl-C
-#   sudo ./powerwatch.sh 60         # watch for 60 seconds
+#   sudo powerwatch                 # watch until Ctrl-C
+#   sudo powerwatch 60              # watch for 60 seconds
+#   (or ./powerwatch.sh, when running from the cloned repo)
 #
 # Run it while the CPU is loaded (stress -c $(nproc)) - idle numbers say nothing.
 

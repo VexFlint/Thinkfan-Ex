@@ -39,7 +39,8 @@
 #   nodes. Reading only BAT0 will happily report 0 W while BAT1 charges.
 #
 # Usage:
-#   ./chargewatch.sh [-once|-watch|-probe] [-interval N] [-csv FILE] [-help]
+#   chargewatch [-once|-watch|-probe] [-interval N] [-csv FILE] [-help]
+#   (or ./chargewatch.sh, when running from the cloned repo)
 #
 #   -once           one reading, then exit
 #   -watch          refresh continuously (default)
