@@ -685,7 +685,7 @@ sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
 
 ## Changelog
 
-### Unreleased
+### 1.3
 
 **Added**
 
