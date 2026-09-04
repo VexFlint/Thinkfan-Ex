@@ -18,7 +18,7 @@
 # Requirements:
 #   - The thinkpad_acpi kernel module must be loaded with fan_control=1.
 #   - This script (and the installed thinkfan-ex script) must be run as root.
-# Version: 1.3
+# Version: 1.3.1
 # Author: Bruno Bellizzi Grande
 # Date: 2026-09-04
 
