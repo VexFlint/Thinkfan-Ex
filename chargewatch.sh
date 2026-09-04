@@ -571,6 +571,10 @@ run_probe() {
     fi
 
     local cores; cores="$(nproc)"
+    # A read still beats an estimate here: if UCSI already gave us the
+    # advertised ceiling, the probe's own floor is corroborating evidence,
+    # not the only evidence, and classify_adapter should say so.
+    local advertised; advertised="$(pd_max_watts "$(pd_caps_dir)")"
     cat <<EOF
 chargewatch -probe
 
@@ -644,7 +648,7 @@ EOF
   so the adapter hit its ceiling at roughly ${peak} W measured (plus ${PLATFORM_OVERHEAD_LOW}-${PLATFORM_OVERHEAD_HIGH} W of
   platform overhead RAPL cannot see).
 
-  $(classify_adapter "$peak" 1)
+  $(classify_adapter "$peak" 1 "$advertised")
 EOF
     elif [[ "$trip" == "starved" ]]; then
         cat <<EOF
@@ -652,14 +656,14 @@ EOF
   below its resume threshold — the adapter has no headroom left at roughly
   ${peak} W measured (plus ${PLATFORM_OVERHEAD_LOW}-${PLATFORM_OVERHEAD_HIGH} W of platform overhead RAPL cannot see).
 
-  $(classify_adapter "$peak" 1)
+  $(classify_adapter "$peak" 1 "$advertised")
 EOF
     else
         cat <<EOF
   Never saturated — peak observed draw was ${peak} W, the packs kept charging
   and the EC never cut charge current. The adapter supplies at least that much.
 
-  $(classify_adapter "$peak")
+  $(classify_adapter "$peak" 0 "$advertised")
 EOF
     fi
 }
