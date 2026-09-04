@@ -21,13 +21,31 @@ you want your own curve. This gives you one.
 
 ---
 
+## Contents
+
+| | |
+|---|---|
+| [What it does](#what-it-does) | The installer, the daemon, and the companion tools |
+| [Requirements](#requirements) · [Installation](#installation) | Getting it running |
+| **[Commands](#commands)** | **Every command in the suite, in three tables** |
+| [Compatibility](#compatibility) | Whether your machine can do this at all |
+| [Configuration](#configuration) | The curve, and the five knobs that shape it |
+| [Measuring your fan](#measuring-your-fan) | Finding your real RPM ladder before you tune |
+| [Power and charging](#power-and-charging) | `chargewatch`, USB-C PD, and where the watts go |
+| [Safety](#safety) · [Logging](#logging) · [Troubleshooting](#troubleshooting) | Operating it |
+| [Uninstallation](#uninstallation) · [Changelog](#changelog) | Removing it, and what changed |
+
 ## What it does
 
 The installer (`thinkfan-extreme.sh`) sets up everything in one pass:
 
 - Verifies root, then ensures `/etc/modprobe.d/thinkpad_acpi.conf` contains
   `fan_control=1`, backing up the existing file first if it needs changing
-- Appends `thinkpad_acpi.fan_control=1` to `GRUB_CMDLINE_LINUX` and runs `update-grub`
+- Adds `thinkpad_acpi.fan_control=1` to the kernel command line — through
+  `GRUB_CMDLINE_LINUX` + `update-grub` on GRUB systems, or
+  `KERNEL_CMDLINE[default]` + `limine-update` on Limine systems. If neither
+  bootloader config is present it says so and skips the step rather than failing:
+  the `modprobe.d` entry above is the real prerequisite and stands on its own
 - Reloads the `thinkpad_acpi` module, or tells you to reboot if it's built into
   the kernel and therefore can't be reloaded
 - Installs the `thinkfan-ex` daemon to `/usr/local/bin`
@@ -38,6 +56,120 @@ The daemon (`thinkfan-ex`) then runs continuously: it reads every temperature se
 it can find, takes the hottest reading, maps it to a fan level through your
 configured thresholds, and writes that level to `/proc/acpi/ibm/fan`. Above
 `CRITICAL_TEMP` it switches to `disengaged`.
+
+Alongside it the repo carries four standalone tools that change nothing on the
+machine: `sensors.sh` and `powerwatch.sh` for reading thermals and power,
+`fanbench.sh` for measuring your fan by hand, and `chargewatch.sh` for watching
+USB-C PD charge rate. See [Commands](#commands).
+
+## Requirements
+
+| | |
+|---|---|
+| Hardware | A ThinkPad exposing `/proc/acpi/ibm/fan` — see [Compatibility](#compatibility) |
+| Kernel module | `thinkpad_acpi` loaded with `fan_control=1` (the installer handles this) |
+| Privileges | Root, for both the installer and the daemon |
+| Init system | systemd |
+| Bootloader | GRUB or Limine for the automatic boot-parameter step; anything else is a manual one-liner |
+| Optional | `msr-tools`, if you want the throttle diagnostics in [Tuning](#tuning-to-your-machine) |
+
+A reboot is required after installation, since the boot parameter only takes effect
+at boot.
+
+## Installation
+
+```bash
+git clone https://github.com/BrunoGrande/Thinkfan-Ex.git
+cd Thinkfan-Ex
+chmod +x *.sh
+sudo ./thinkfan-extreme.sh
+sudo reboot
+```
+
+Verify afterwards:
+
+```bash
+systemctl status thinkfan-extreme
+sudo thinkfan-ex -status
+```
+
+`status: enabled` in the fan output means manual control is active. If it says
+`disabled`, the boot parameter didn't take — confirm
+`thinkpad_acpi.fan_control=1` is in `/proc/cmdline`, and see
+[Troubleshooting](#troubleshooting) for where to look per bootloader.
+
+## Commands
+
+Everything in the suite, grouped by what it operates on. The daemon runs by itself
+and needs no interaction; these are for when you want to look, measure, or tune.
+
+### The daemon — `thinkfan-ex`
+
+Installed to `/usr/local/bin`, so it's on `PATH` and needs no `./`.
+
+| Command | Effect | Root? |
+|---|---|---|
+| `thinkfan-ex -help` | Usage summary | no |
+| `sudo thinkfan-ex -check` | Capability report and verdict for this machine. Touches nothing | yes |
+| `sudo thinkfan-ex -status` | Current fan level, RPM, and *every* sensor on the machine | yes |
+| `sudo thinkfan-ex -probe` | Measure real RPM at each level. Stop the service first — see [Measuring your fan](#measuring-your-fan) | yes |
+| `sudo thinkfan-ex -config` | Open `/etc/thinkfan-extreme.conf` in `$EDITOR` | yes |
+| `sudo thinkfan-ex -uninstall` | Remove daemon, service, boot parameter, completion | yes |
+
+Service control is ordinary systemd. After editing the config, restart so it
+re-reads it:
+
+```bash
+sudo systemctl restart thinkfan-extreme     # reload config
+sudo systemctl stop thinkfan-extreme        # hand the fan back to firmware
+journalctl -u thinkfan-extreme -f           # follow it live
+```
+
+### Thermal and power tools
+
+Standalone, read-only, and safe to run at any time. None of them require the
+daemon to be installed.
+
+| Command | Effect | Root? |
+|---|---|---|
+| `./sensors.sh` | Every thermal sensor with its hwmon, name, label and reading, in one table | no |
+| `sudo ./powerwatch.sh` | Live package/core/iGPU power, clocks, temperature, throttle reasons. Runs until Ctrl-C | yes |
+| `sudo ./powerwatch.sh 60` | The same, bounded to 60 seconds | yes |
+| `sudo ./fanbench.sh` | Interactive bench: live RPM, change level by keypress | yes |
+
+`powerwatch.sh` is only meaningful under load — idle numbers say nothing. Run it
+alongside `stress -c $(nproc)`.
+
+`fanbench.sh` refuses to start while `thinkfan-extreme` is active, since two things
+writing fan levels would fight. Stop the service first, and note its keys:
+
+| Key | Action |  | Key | Action |
+|---|---|---|---|---|
+| `0`-`7` | set that fan level | | `f` | full-speed |
+| `a` | back to `auto` | | `r` | reset the observed table |
+| `d` | `disengaged` | | `q` | quit, restoring `auto` |
+
+Tunable through the environment: `SETTLE` (4 polls ignored after a level change).
+
+### Charge monitoring — `chargewatch.sh`
+
+USB-C PD charge-rate monitor for dual-battery ThinkPads. Read-only: no EC writes,
+no daemon, nothing to uninstall. See [Power and charging](#power-and-charging) for
+what it can and cannot see.
+
+| Command | Effect | Root? |
+|---|---|---|
+| `./chargewatch.sh -help` | Usage and the full explanation of what's measured vs. inferred | no |
+| `./chargewatch.sh -once` | One reading, then exit | for RAPL |
+| `sudo ./chargewatch.sh` | Watch continuously — the default mode | for RAPL |
+| `sudo ./chargewatch.sh -probe` | Load every core until the adapter saturates, bounding the ceiling empirically. **Heats the machine** | yes |
+| `./chargewatch.sh -interval 5` | Seconds between samples (default 2) | — |
+| `./chargewatch.sh -csv out.csv` | Append timestamped samples as CSV | — |
+
+Root is needed for the RAPL energy counters, which is how SoC power enters the
+estimate. Without it the battery table still prints, and the adapter estimate is
+replaced by a note saying why. `-probe` requires root outright and refuses to run
+on battery.
 
 ## Compatibility
 
@@ -70,59 +202,15 @@ disengaged, full-speed)`, everything this project needs is present. The driver
 rejects unsupported operations with `EINVAL`, so a level it cannot set fails loudly
 rather than silently doing nothing.
 
-Two caveats worth knowing before you tune:
+Two caveats worth knowing before you tune, both covered in
+[Measuring your fan](#measuring-your-fan):
 
 - **`auto` and `full-speed`/`disengaged` are not universal.** The kernel documents
   that not all ThinkPads support them. If yours doesn't, set `CRITICAL_TEMP` above
   any temperature you will realistically reach so the disengaged rung is never used,
   and the ladder still works on levels 0-7 alone.
 - **Levels do not map to distinct speeds on every model.** Several older machines
-  collapse 3-5 into a single RPM, and some cap the useful maximum below 7. Measure
-  yours:
-
-  ```bash
-  sudo systemctl stop thinkfan-extreme
-  sudo thinkfan-ex -probe
-  ```
-
-  This steps through every level and prints the real RPM alongside the CPU
-  temperature. Rather than waiting a fixed time at each level, it polls the
-  tachometer and moves on only once the readings stop changing — a fan has real
-  inertia, and spinning down from 4000 RPM to a stop takes far longer than nudging
-  one level upward. Steadiness is measured as the spread across a window of recent
-  readings, so a slow ramp is not mistaken for a settled one; `disengaged` in
-  particular is open-loop and can take well over a minute to reach full speed.
-
-  A figure marked `*` never went steady inside the time limit and is approximate.
-  Levels that share an RPM want one threshold between them, not several.
-
-  The probe's temperature checks read the same sensors as the curve, so widening
-  `SENSOR_PATTERNS` widens what its safety limits watch. `-status` deliberately
-  does not: it lists every sensor on the machine, which is how you find out that
-  something unexpected is running hot.
-
-  The probe refuses to run if the service is active or the CPU is above 65 °C,
-  aborts early if the CPU passes 80 °C, and restores automatic control on exit or
-  interrupt. Expect two to four minutes, and it is audible.
-
-  For interactive work — watching RPM live while you change levels by hand — use
-  `fanbench.sh` instead:
-
-  ```bash
-  sudo systemctl stop thinkfan-extreme
-  sudo ./fanbench.sh
-  ```
-
-  Press `0`-`7`, `a` for auto, `d` for disengaged, `f` for full-speed. It shows the
-  current RPM and builds a min/max/last table per level as you sit on each one.
-  Readings taken while the fan is still changing speed are discarded, as is the
-  `65535` value the EC returns when its tachometer registers are not being updated.
-  `q` restores automatic control.
-
-  Tunable through the environment if the defaults do not suit your fan:
-  `POLL` (2 s between reads), `SETTLE_TOL` (60 RPM spread counted as steady),
-  `SETTLE_HITS` (3 readings), `PROBE_MIN` (6 s), `PROBE_MAX` (45 s), and
-  `PROBE_MAX_DISENGAGED` (120 s).
+  collapse 3-5 into a single RPM, and some cap the useful maximum below 7.
 
 ### Known working
 
@@ -151,62 +239,6 @@ These regulate the fan through a method `thinkpad_acpi` does not drive:
 hardware lack `thinkpad_acpi` entirely, so there is no `/proc/acpi/ibm/fan` to write
 to. The installer will report the missing interface rather than doing damage, but
 there is nothing here for those machines.
-
-## Requirements
-
-| | |
-|---|---|
-| Hardware | A ThinkPad exposing `/proc/acpi/ibm/fan` — see [Compatibility](#compatibility) |
-| Kernel module | `thinkpad_acpi` loaded with `fan_control=1` (the installer handles this) |
-| Privileges | Root, for both the installer and the daemon |
-| Init system | systemd |
-| Optional | `msr-tools`, if you want the throttle diagnostics in [Tuning](#tuning-to-your-machine) |
-
-A reboot is required after installation, since the boot parameter only takes effect
-at boot.
-
-## Installation
-
-```bash
-git clone https://github.com/BrunoGrande/Thinkfan-Ex.git
-cd Thinkfan-Ex
-chmod +x thinkfan-extreme.sh
-sudo ./thinkfan-extreme.sh
-sudo reboot
-```
-
-Verify afterwards:
-
-```bash
-systemctl status thinkfan-extreme
-sudo thinkfan-ex -status
-```
-
-`status: enabled` in the fan output means manual control is active. If it says
-`disabled`, the boot parameter didn't take — check that `update-grub` actually
-modified `/etc/default/grub` and that you rebooted.
-
-## Usage
-
-The daemon starts at boot and needs no interaction. When you do want to poke at it:
-
-| Command | Effect |
-|---|---|
-| `./sensors.sh` | Every thermal sensor with its name, label and reading |
-| `sudo ./powerwatch.sh` | Live package/core/iGPU power, clocks, temperature, throttle reasons |
-| `sudo ./fanbench.sh` | Interactive bench: live RPM, switch levels by keypress |
-| `sudo thinkfan-ex -check` | Capability report and verdict for this machine |
-| `sudo thinkfan-ex -probe` | Measure real RPM at each level (stop the service first) |
-| `sudo thinkfan-ex -status` | Current fan level, RPM, and every sensor reading |
-| `sudo thinkfan-ex -config` | Open `/etc/thinkfan-extreme.conf` in `$EDITOR` |
-| `sudo thinkfan-ex -uninstall` | Remove the daemon, service, GRUB change, and completion |
-| `thinkfan-ex -help` | Usage summary |
-
-After editing the config, restart the service so it re-reads it:
-
-```bash
-sudo systemctl restart thinkfan-extreme
-```
 
 ## Configuration
 
@@ -389,6 +421,59 @@ straight to `auto` below some temperature: a floor has no deadband, so a
 temperature resting on it toggles the fan every poll. Tested on a trace hovering
 around 45 °C, a bare floor produced 35 level changes where the deadband produced 1.
 
+## Measuring your fan
+
+Thresholds set against assumed fan speeds are guesses. These two tools tell you
+what your machine actually does, and both want the service stopped first so
+nothing else is writing levels.
+
+### `-probe` — the automatic sweep
+
+```bash
+sudo systemctl stop thinkfan-extreme
+sudo thinkfan-ex -probe
+```
+
+This steps through every level and prints the real RPM alongside the CPU
+temperature. Rather than waiting a fixed time at each level, it polls the
+tachometer and moves on only once the readings stop changing — a fan has real
+inertia, and spinning down from 4000 RPM to a stop takes far longer than nudging
+one level upward. Steadiness is measured as the spread across a window of recent
+readings, so a slow ramp is not mistaken for a settled one; `disengaged` in
+particular is open-loop and can take well over a minute to reach full speed.
+
+A figure marked `*` never went steady inside the time limit and is approximate.
+Levels that share an RPM want one threshold between them, not several — see
+[Prune duplicate levels](#prune-duplicate-levels).
+
+The probe's temperature checks read the same sensors as the curve, so widening
+`SENSOR_PATTERNS` widens what its safety limits watch. `-status` deliberately
+does not: it lists every sensor on the machine, which is how you find out that
+something unexpected is running hot.
+
+The probe refuses to run if the service is active or the CPU is above 65 °C,
+aborts early if the CPU passes 80 °C, and restores automatic control on exit or
+interrupt. Expect two to four minutes, and it is audible.
+
+### `fanbench.sh` — the interactive bench
+
+For watching RPM live while you change levels by hand:
+
+```bash
+sudo systemctl stop thinkfan-extreme
+sudo ./fanbench.sh
+```
+
+It shows the current RPM and builds a min/max/last table per level as you sit on
+each one. Readings taken while the fan is still changing speed are discarded, as is
+the `65535` value the EC returns when its tachometer registers are not being
+updated. Keys are listed under [Commands](#commands).
+
+Tunable through the environment if the defaults do not suit your fan:
+`POLL` (2 s between reads), `SETTLE_TOL` (60 RPM spread counted as steady),
+`SETTLE_HITS` (3 readings), `PROBE_MIN` (6 s), `PROBE_MAX` (45 s), and
+`PROBE_MAX_DISENGAGED` (120 s).
+
 ### Tuning to your machine
 
 The shipped defaults suit a repasted ThinkPad with TjMax 100 °C. They are a starting
@@ -422,7 +507,87 @@ machine:
 | 16–22 | Degrees below TjMax |
 
 If bit 10 is set and bit 0 is clear, you're power limited rather than thermally
-limited — a more aggressive fan curve will buy you noise and nothing else.
+limited — a more aggressive fan curve will buy you noise and nothing else. That is
+where `powerwatch.sh` and `chargewatch.sh` take over.
+
+## Power and charging
+
+`chargewatch.sh` answers a different question from the rest of the suite: not how
+hot the machine is, but how much power is reaching it. On a machine that charges
+only over USB-C PD, an underpowered adapter looks exactly like a thermal problem
+from the outside — clocks drop, and nothing in the fan logs explains it.
+
+### What it can and cannot see
+
+The embedded controller negotiates PD in firmware and does **not** hand the
+negotiated contract (the RDO) to the OS. So there are two paths, and the tool
+prefers the first:
+
+- **Where UCSI exists** (`USBC000` with `ucsi_acpi` bound, common on newer
+  kernels), `/sys/class/typec/` carries the charger's advertised source
+  capabilities — the PDO menu it offers. That is not the contract, but it is a hard
+  upper bound, and it beats any inference. If the brick advertises 100 W, no
+  ceiling you hit is the brick's fault.
+- **Without UCSI** the rate is inferred, not read:
+  `adapter output ≥ (power into the batteries) + (SoC package power)`. That is a
+  floor. Platform overhead RAPL cannot see — panel, SSD, USB, VRM losses — adds
+  roughly 5-15 W on top.
+
+Two further details matter on dual-battery machines. **Power Bridge charges one
+pack at a time**, so an idle pack next to a charging one is normal EC sequencing,
+not a stalled charge — the tool sums every `BAT*` node rather than reading `BAT0`
+and reporting 0 W while `BAT1` charges. And some packs populate `power_now` while
+leaving `current_now` at zero, so amps are derived as W/V rather than printed as
+`34.988 W at 0.000 A`.
+
+### How saturation actually looks
+
+When the adapter runs out of headroom the EC does **not** let the packs discharge
+first. It goes through two stages in order:
+
+1. **Charge current tapers to zero** while a pack sits below its resume threshold —
+   status reads `Not charging`. This is what a 45 W brick hits.
+2. **The packs discharge on AC.** Many adapters never reach this at all.
+
+Both are reported, and `-probe` trips on either. A pack charging at a *trickle*
+because the budget is nearly spent still reads `Charging`, so stage 1 does not fire
+on it — that shows up as falling charge power instead, and is deliberately not
+guessed at.
+
+### Configuring chargewatch
+
+Optional, at `/etc/chargewatch.conf`. Sourced as shell only after `bash -n` passes,
+the same guard `thinkfan-ex` uses, so a typo can't wreck your shell.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `INTERVAL` | `2` | Seconds between samples |
+| `CSV_LOG` | — | Path to append timestamped samples to |
+| `PROBE_SECONDS` | `45` | How long `-probe` holds full load |
+| `MACHINE_MAX_W` | `65` | Most this chassis will ever negotiate (T480: 20 V / 3.25 A) |
+| `PLATFORM_OVERHEAD_LOW` | `5` | Watts invisible to RAPL, low estimate |
+| `PLATFORM_OVERHEAD_HIGH` | `15` | Watts invisible to RAPL, high estimate |
+
+`MACHINE_MAX_W` is what separates "the adapter is your ceiling" from "the EC is
+your ceiling" in the verdict line, so it's the one worth setting correctly for a
+chassis other than a T480.
+
+### Testing it
+
+`test-chargewatch.sh` fakes the entire sysfs surface — batteries, RAPL, typec PDOs
+— in a temp directory, through four roots the script honours
+(`CHARGEWATCH_PS_ROOT`, `CHARGEWATCH_RAPL_ROOT`, `CHARGEWATCH_TYPEC_ROOT`,
+`CHARGEWATCH_CONF`):
+
+```bash
+./test-chargewatch.sh ./chargewatch.sh     # 24 assertions
+```
+
+No sudo, no hardware, no CPU load. Every state worth checking — Power Bridge
+sequencing, real starvation, the hysteresis band, discharge-on-AC, 100 W vs 45 W
+chargers, missing UCSI, the capped ETA — is one command rather than an afternoon
+with a charger. `-probe` is deliberately not covered, since it pegs every core;
+test that one by hand.
 
 ## Safety
 
@@ -463,8 +628,11 @@ journalctl -u thinkfan-extreme -f
 ## Troubleshooting
 
 **`status: disabled` in the fan output.** The boot parameter isn't active. Confirm
-`thinkpad_acpi.fan_control=1` is in `/proc/cmdline`; if it isn't, check
-`/etc/default/grub` and rerun `update-grub`, then reboot.
+`thinkpad_acpi.fan_control=1` is in `/proc/cmdline`. If it isn't, check whichever
+bootloader config applies — `/etc/default/grub` then `update-grub` on GRUB,
+`/etc/default/limine` then `limine-update` on Limine — and reboot. The
+`fan_control=1` line in `/etc/modprobe.d/thinkpad_acpi.conf` covers most setups on
+its own, so also check that it survived.
 
 **Service restarts in a loop.** Check `journalctl -u thinkfan-extreme -b`. The usual
 cause is a config file that passes its syntax check but sets nonsense values.
@@ -475,6 +643,12 @@ Run `sudo thinkfan-ex -status` and look for an outlier — it's often a non-CPU 
 **Levels change every few seconds.** `HYSTERESIS` is smaller than your temperature
 swing. Raise it, or widen the gaps between thresholds.
 
+**Clocks are low but the fan is quiet and temperatures are fine.** You are probably
+power limited rather than thermally limited. Check MSR bit 10 with
+[`powerwatch.sh`](#tuning-to-your-machine), and if the machine runs on USB-C PD,
+check what the adapter is actually delivering with
+[`chargewatch.sh`](#power-and-charging).
+
 ## Uninstallation
 
 ```bash
@@ -483,9 +657,9 @@ echo "level auto" | sudo tee /proc/acpi/ibm/fan
 ```
 
 This stops and disables the service, removes the daemon and bash completion, and
-reverts the GRUB parameter. The second command is not optional: `-uninstall` exits
-before the restore trap is installed, so the fan stays at whatever level was last
-written. See [Safety](#safety).
+reverts the boot parameter from whichever bootloader received it. The second command
+is not optional: `-uninstall` exits before the restore trap is installed, so the fan
+stays at whatever level was last written. See [Safety](#safety).
 
 The config file and logs are left in place; remove them yourself if you want a clean
 slate:
