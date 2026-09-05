@@ -646,8 +646,8 @@ chassis other than a T480.
 
 ### Raising the power limits
 
-Lenovo's firmware programs two limits conservatively, and reprograms them at boot
-and on resume:
+Lenovo's firmware programs two limits conservatively and reprograms them at every
+boot:
 
 - **TCC offset** — how far *below* TjMax the CPU starts throttling. A T480
   i7-8650U ships offset 30: it throttles at 70C on a chip rated to 100C.
@@ -662,8 +662,8 @@ hotter and the right values depend on your chassis and cooler:
 sudo thinkfan-ex -powerunlock
 ```
 
-That installs `thinkpad-power-unlock.service`, enables it for boot and resume, and
-writes `/etc/thinkpad-power-unlock.conf` with every setting commented out. It
+That installs `thinkpad-power-unlock.service`, enables it for boot and resume
+(resume as insurance — see [Does it stick?](#does-it-stick)), and writes `/etc/thinkpad-power-unlock.conf` with every setting commented out. It
 applies nothing until you uncomment one.
 
 | Setting | Meaning |
@@ -686,12 +686,42 @@ Re-run `sudo thinkfan-ex -powerunlock` after editing the config, or
 `sudo systemctl restart thinkpad-power-unlock` — it reports what it applied and
 the resulting throttle temperature, and exits non-zero if a write did not stick.
 
-> **The firmware can claw these back under sustained load**, not only at boot and
-> resume. It was observed reverting both limits mid-run — PL1 first, TCC half a
-> second later — in one of three identical runs, with no trigger identified. The
+> **The firmware can claw these back under sustained load**, not only at boot. It
+> was observed reverting both limits mid-run — PL1 first, TCC half a second later
+> — in one of three identical runs, with no trigger identified, and has not
+> recurred since across a full 300 s run. Treat it as real but intermittent. The
 > symptom is a machine that suddenly pins at the *firmware* throttle temperature.
 > Check with `systemctl restart thinkpad-power-unlock`, which reprints the live
 > values.
+
+### Does it stick?
+
+Three ways the limits could be lost, and what each actually does on a T480
+(i7-8650U, TjMax 100, kernel 7.2.2):
+
+| | Result | How it was checked |
+|---|---|---|
+| **Reboot** | Holds | Unit runs at boot; `TCC 4 / PL1 22 W` live in sysfs afterwards |
+| **Sustained load** | Held | `burnboth.sh 300` — 180 samples, no `LIMITS CHANGED` line. But see the claw-back note above: one earlier run did revert |
+| **Suspend / resume** | Holds, unaided | Config moved aside so the unit no-ops, then a 75 s S3 cycle — both limits came back untouched |
+
+The load run is also the positive control that the limits are doing something:
+package power sits at **21.9 W sustained** against the 22 W PL1, and the throttle
+reason flips from `PL1` to `thermal` exactly as the package reaches **96 C** —
+the TCC offset 4 trip point, engaging where predicted.
+
+The resume result is the surprising one. `thinkpad-power-unlock.service` is
+`WantedBy=suspend.target`, so it does re-run on every wake (the unit's
+`InvocationID` changes, which is how you tell a genuine re-run from a value that
+was simply never disturbed) — but with it deliberately disabled the firmware left
+both limits alone anyway. The resume hook is cheap insurance, not load-bearing.
+
+> If you re-test this yourself, suspend with **`systemctl suspend`**, not
+> `rtcwake -m mem`. `rtcwake` writes straight to `/sys/power/state`, which never
+> activates `suspend.target` — so the unit cannot run and the test silently proves
+> nothing. On a machine with the NVIDIA driver it also aborts the suspend outright
+> (`nv_pmops_suspend ... returns -5`), because `nvidia-suspend.service` never got
+> to run either. Arm the wake separately with `rtcwake -m no -s 75`.
 
 ### Testing it
 
