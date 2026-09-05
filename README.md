@@ -56,6 +56,10 @@ The installer (`thinkfan-extreme.sh`) sets up everything in one pass:
   (`sensors.sh` becomes `thermalsensors` because plain `sensors` would shadow the
   lm_sensors binary of that name.) They are copies: the daemon never calls them,
   and they still run straight from the clone if you prefer
+- Installs `power-unlock.sh` to `/usr/local/sbin/thinkpad-power-unlock`. Placing it
+  changes nothing on its own: it does nothing without a config, and its unit is
+  only created when you explicitly run
+  [`thinkfan-ex -powerunlock`](#raising-the-power-limits)
 
 The daemon (`thinkfan-ex`) then runs continuously: it reads every temperature sensor
 it can find, takes the hottest reading, maps it to a fan level through your
@@ -150,6 +154,7 @@ Installed to `/usr/local/bin`, so it's on `PATH` and needs no `./`.
 | `sudo thinkfan-ex -status` | Current fan level, RPM, and *every* sensor on the machine | yes |
 | `sudo thinkfan-ex -probe` | Measure real RPM at each level. Stop the service first — see [Measuring your fan](#measuring-your-fan) | yes |
 | `sudo thinkfan-ex -config` | Open `/etc/thinkfan-extreme.conf` in `$EDITOR` | yes |
+| `sudo thinkfan-ex -powerunlock` | Enable the CPU power/thermal limit unit. Opt-in, applies nothing until configured — see [Raising the power limits](#raising-the-power-limits) | yes |
 | `sudo thinkfan-ex -uninstall` | Remove daemon, service, boot parameter, completion | yes |
 
 Service control is ordinary systemd. After editing the config, restart so it
@@ -614,6 +619,55 @@ the same guard `thinkfan-ex` uses, so a typo can't wreck your shell.
 your ceiling" in the verdict line, so it's the one worth setting correctly for a
 chassis other than a T480.
 
+### Raising the power limits
+
+Lenovo's firmware programs two limits conservatively, and reprograms them at boot
+and on resume:
+
+- **TCC offset** — how far *below* TjMax the CPU starts throttling. A T480
+  i7-8650U ships offset 30: it throttles at 70C on a chip rated to 100C.
+- **PL1** — sustained package power. That same chassis ships 15 W against an MSR
+  copy already set to 25 W. The hardware enforces `min(MSR, MMIO)`, so only the
+  MMIO copy needs raising.
+
+This is **opt-in and off by default**, because raising them makes the machine run
+hotter and the right values depend on your chassis and cooler:
+
+```bash
+sudo thinkfan-ex -powerunlock
+```
+
+That installs `thinkpad-power-unlock.service`, enables it for boot and resume, and
+writes `/etc/thinkpad-power-unlock.conf` with every setting commented out. It
+applies nothing until you uncomment one.
+
+| Setting | Meaning |
+|---|---|
+| `TCC_OFFSET` | Degrees below TjMax at which throttling begins. `0` means throttle at TjMax |
+| `PL1_UW` | Sustained package power, in microwatts |
+
+**TjMax is not 100 on every part.** Read yours before choosing an offset:
+
+```bash
+cat /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp1_crit   # millidegrees
+```
+
+Measured on a repasted T480 (i7-8650U, TjMax 100): `TCC_OFFSET=4` and
+`PL1_UW=22000000` hold two threads at 4.1 GHz and 96C with the fan at
+`disengaged`, settling to 87C / 3.5 GHz / 21 W once PL1 takes over. Offset `0`
+leaves no room for the 1-2C the per-core reading overshoots the trip point by.
+
+Re-run `sudo thinkfan-ex -powerunlock` after editing the config, or
+`sudo systemctl restart thinkpad-power-unlock` — it reports what it applied and
+the resulting throttle temperature, and exits non-zero if a write did not stick.
+
+> **The firmware can claw these back under sustained load**, not only at boot and
+> resume. It was observed reverting both limits mid-run — PL1 first, TCC half a
+> second later — in one of three identical runs, with no trigger identified. The
+> symptom is a machine that suddenly pins at the *firmware* throttle temperature.
+> Check with `systemctl restart thinkpad-power-unlock`, which reprints the live
+> values.
+
 ### Testing it
 
 `test-chargewatch.sh` fakes the entire sysfs surface — batteries, RAPL, typec PDOs
@@ -700,7 +754,9 @@ echo "level auto" | sudo tee /proc/acpi/ibm/fan
 
 This stops and disables the service, removes the daemon, its bash completion and the
 four companion tools from `/usr/local/bin`, and reverts the boot parameter from
-whichever bootloader received it. Your clone is untouched, so the tools remain
+whichever bootloader received it. It also stops and removes
+`thinkpad-power-unlock.service` and its helper, so the CPU limits go back to the
+firmware's own values at the next boot. Your clone is untouched, so the tools remain
 available there as `./powerwatch.sh` and friends. The second command
 is not optional: `-uninstall` exits before the restore trap is installed, so the fan
 stays at whatever level was last written. See [Safety](#safety).
@@ -710,6 +766,7 @@ slate:
 
 ```bash
 sudo rm -f /etc/thinkfan-extreme.conf /var/log/thinkfan-extreme*.log
+sudo rm -f /etc/thinkpad-power-unlock.conf
 ```
 
 ## Changelog
