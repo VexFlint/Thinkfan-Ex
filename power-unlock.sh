@@ -1,6 +1,11 @@
 #!/bin/bash
 # Re-apply CPU power/thermal limits that Lenovo's firmware programs
-# conservatively, and that it reprograms at boot and on resume.
+# conservatively and reprograms at every boot.
+#
+# Resume is covered too (the unit is WantedBy=suspend.target), but on the one
+# T480 cycle measured so far it was not needed: with this script deliberately
+# no-op'd across a 75s S3 suspend, both limits came back untouched. Kept as
+# insurance -- it costs ~26ms -- not as a known requirement.
 #
 #   TCC offset   how far BELOW TjMax the CPU starts throttling. The firmware
 #                ships a large offset on some chassis (30 on a T480, i.e. throttle
@@ -82,6 +87,7 @@ if [ -n "$tj" ] && [ -n "$TCC_OFFSET" ]; then
     echo "     throttle point is now $(( tj - TCC_OFFSET ))C (TjMax $tj - offset $TCC_OFFSET)"
 fi
 
-# Firmware can claw these back under sustained load, not just at boot and resume.
-# Re-run this unit to reapply; see the README.
+# Firmware can claw these back under sustained load, not just at boot. It is
+# intermittent: observed once in three identical runs, then absent across a full
+# 300s all-core + dGPU run. Re-run this unit to reapply; see the README.
 exit $rc

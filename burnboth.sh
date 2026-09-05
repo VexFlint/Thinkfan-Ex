@@ -216,9 +216,11 @@ TCC_PATH = glob.glob("/sys/devices/pci0000:00/*/tcc_offset_degree_celsius")
 PL1_PATH = "/sys/class/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_power_limit_uw"
 
 def limits():
-    """The unit applies these at boot, verifies them, and exits 0 -- and they
-    were back at the firmware defaults by the next run anyway. Nothing reverts
-    them at idle, so watch for it happening under load and note exactly when."""
+    """The unit applies these at boot, verifies them, and exits 0 -- which says
+    nothing about whether they survive. They were seen back at the firmware
+    defaults mid-run once in three runs, and held for a full 300s run after that,
+    so the revert is real but intermittent. Nothing reverts them at idle: sample
+    every tick and note the exact second, since that is the only way to catch it."""
     try:
         tcc = open(TCC_PATH[0]).read().strip() if TCC_PATH else "?"
     except Exception:
