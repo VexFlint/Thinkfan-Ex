@@ -30,6 +30,7 @@ ACPI_CONF="/etc/modprobe.d/thinkpad_acpi.conf"
 SYSTEMD_UNIT="/etc/systemd/system/thinkfan-extreme.service"
 COMPLETION_FILE="/etc/bash_completion.d/thinkfan-ex"
 BIN_DIR="/usr/local/bin"
+SBIN_DIR="/usr/local/sbin"
 # Where this installer lives, so the companion scripts can be found next to it
 # regardless of the directory it was invoked from.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -171,6 +172,9 @@ log_event() {
 
 # === Configuration File Handling ===
 CONFIG_FILE="/etc/thinkfan-extreme.conf"
+POWER_UNLOCK_SCRIPT="/usr/local/sbin/thinkpad-power-unlock"
+POWER_UNLOCK_UNIT="/etc/systemd/system/thinkpad-power-unlock.service"
+POWER_UNLOCK_CONF="/etc/thinkpad-power-unlock.conf"
 
 DEFAULT_CONFIG_CONTENT=$(cat <<'EOC'
 # Thinkfan-Extreme configuration.
@@ -563,6 +567,61 @@ if [ "$#" -gt 0 ]; then
             exit 0
             ;;
 
+        -powerunlock)
+            # Opt-in, and deliberately not part of the normal install: this lets
+            # the CPU run hotter and draw more sustained power than the firmware
+            # intends, and the safe values are specific to a chassis and cooler.
+            if [ "$EUID" -ne 0 ]; then
+                echo "The powerunlock option must be run as root. Exiting."
+                exit 1
+            fi
+            if [ ! -x "$POWER_UNLOCK_SCRIPT" ]; then
+                echo "$POWER_UNLOCK_SCRIPT is missing."
+                echo "Re-run thinkfan-extreme.sh from the repo clone to install it."
+                exit 1
+            fi
+            if [ ! -f "$POWER_UNLOCK_CONF" ]; then
+                cat > "$POWER_UNLOCK_CONF" << 'EOC'
+# Thinkpad power-unlock configuration.
+#
+# Nothing is applied while both settings stay commented out. Uncomment only
+# after reading "Raising the power limits" in the README: these let the CPU run
+# hotter and draw more sustained power than the firmware intends, and the right
+# values differ per chassis and per cooler.
+#
+# TCC_OFFSET: degrees BELOW TjMax at which the CPU begins throttling. Read your
+# own TjMax from /sys/devices/platform/coretemp.0/hwmon/hwmon*/temp1_crit -- it
+# is not 100 on every part. A T480 i7-8650U ships offset 30, throttling at 70C.
+# Measured on that chassis: offset 4 (throttle at 96C) holds with the fan at
+# disengaged, and leaves room for the 1-2C the reading overshoots the trip by.
+#TCC_OFFSET=4
+
+# PL1_UW: sustained package power, in microwatts. The hardware enforces
+# min(MSR, MMIO); this writes the MMIO copy. T480 firmware ships 15 W.
+#PL1_UW=22000000
+EOC
+                echo "Created $POWER_UNLOCK_CONF."
+                echo "Nothing is applied until you uncomment a setting in it."
+            fi
+            cat > "$POWER_UNLOCK_UNIT" << EOU
+[Unit]
+Description=Raise ThinkPad CPU power/thermal limits
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=$POWER_UNLOCK_SCRIPT
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+EOU
+            systemctl daemon-reload
+            systemctl enable thinkpad-power-unlock.service >/dev/null 2>&1 || true
+            echo "Enabled thinkpad-power-unlock.service (applies at boot and on resume)."
+            rc=0
+            "$POWER_UNLOCK_SCRIPT" || rc=$?
+            exit $rc
+            ;;
         -uninstall)
             # Ensure this branch is run as root.
             if [ "$EUID" -ne 0 ]; then
@@ -575,6 +634,12 @@ if [ "$#" -gt 0 ]; then
             rm -f /etc/systemd/system/thinkfan-extreme.service
             systemctl daemon-reload
             rm -f /usr/local/bin/thinkfan-ex
+            # Power unlock, if -powerunlock was ever run. The config is left
+            # behind like every other config here, for the user to remove.
+            systemctl stop thinkpad-power-unlock.service 2>/dev/null || true
+            systemctl disable thinkpad-power-unlock.service 2>/dev/null || true
+            rm -f /etc/systemd/system/thinkpad-power-unlock.service
+            rm -f /usr/local/sbin/thinkpad-power-unlock
             # Companion tools installed alongside the daemon.
             rm -f /usr/local/bin/powerwatch \
                   /usr/local/bin/thermalsensors \
@@ -606,6 +671,7 @@ if [ "$#" -gt 0 ]; then
             echo "  -probe    : Measure real RPM at each fan level. Spins the fan, ~2 min."
             echo "  -status   : Display current fan status and sensor temperature readings."
             echo "  -config   : Create or edit the config file at \$CONFIG_FILE."
+            echo "  -powerunlock: Enable the CPU power/thermal limit unit. Opt-in; see the README."
             echo "  -uninstall: Uninstall thinkfan-ex and its companion tools, disable its systemd service, revert GRUB changes, and remove bash completion."
             exit 0
             ;;
@@ -867,7 +933,7 @@ cat > "$COMPLETION_FILE" << 'EOF'
 _thinkfan_ex_completions() {
     local cur opts
     cur="${COMP_WORDS[COMP_CWORD]}"
-    opts="-check -probe -status -config -uninstall -help"
+    opts="-check -probe -status -config -powerunlock -uninstall -help"
     COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
     return 0
 }
@@ -894,6 +960,20 @@ for tool in "${COMPANION_TOOLS[@]}"; do
         log_event "Skipping $(basename "$src"): not found next to this installer."
     fi
 done
+
+# power-unlock goes to sbin, not bin: it is a privileged system helper rather
+# than something to run by hand. Placing it changes nothing on its own -- it
+# does nothing without /etc/thinkpad-power-unlock.conf, and its unit is only
+# created when someone explicitly runs "thinkfan-ex -powerunlock".
+pu_src="$SCRIPT_DIR/power-unlock.sh"
+if [ -f "$pu_src" ]; then
+    mkdir -p "$SBIN_DIR"
+    install -m 755 "$pu_src" "$SBIN_DIR/thinkpad-power-unlock" \
+        && log_event "Installed power-unlock.sh to $SBIN_DIR/thinkpad-power-unlock." \
+        || log_event "Warning: could not install power-unlock.sh to $SBIN_DIR."
+else
+    log_event "Skipping power-unlock.sh: not found next to this installer."
+fi
 
 # Reload systemd daemon and enable the service.
 systemctl daemon-reload
