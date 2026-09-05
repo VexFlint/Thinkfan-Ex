@@ -235,14 +235,20 @@ def batt():
     tracks the live PD contract, so it cannot answer that. A battery flipping
     to Discharging while on AC is the EC saying the wall stopped keeping up --
     which is exactly the state we expect just before an OCP cut."""
-    flag, tot = "-", 0.0
+    states, tot = set(), 0.0
     for b in ("BAT0", "BAT1"):
         try:
             st = open(f"/sys/class/power_supply/{b}/status").read().strip()
             tot += int(open(f"/sys/class/power_supply/{b}/power_now").read()) / 1e6
         except Exception:
             continue
-        flag = "D" if st == "Discharging" else ("C" if st == "Charging" else "N")
+        states.add(st)
+    # Strongest state across both packs, not the last one iterated: BAT0 can go
+    # Discharging while BAT1 sits Full, and overwriting the flag each pass hid
+    # exactly the signal this column exists to catch.
+    flag = ("D" if "Discharging" in states else
+            "C" if "Charging" in states else
+            "N" if states else "-")
     return f"{flag}{tot:.1f}"
 
 def pd():
