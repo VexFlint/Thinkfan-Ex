@@ -601,6 +601,31 @@ because the budget is nearly spent still reads `Charging`, so stage 1 does not f
 on it — that shows up as falling charge power instead, and is deliberately not
 guessed at.
 
+Measured on a T480 to put numbers on stage 1. The load is `burnboth.sh` — all eight
+threads plus the dGPU, 22 W sustained package power — started against a pack already
+taking full bulk charge:
+
+| t | charge power | what the EC is doing |
+|---|---|---|
+| 0.5 s | 33.4 W | full bulk, load just applied |
+| 8 s | 30.8 W | |
+| 20 s | 27.2 W | |
+| 36 s | 12.4 W | shedding hard |
+| 52 s | 3.5 W | |
+| 68–84 s | **0 W** | `Not charging` — stage 1, fully reached |
+| 100 s | 7.0 W | resuming as the CPU settles under PL1 |
+| 116 s | 15.0 W | |
+
+The adapter gives up roughly 33 W of charge current to keep the system fed, and does
+it as a smooth ramp rather than a cliff. Stage 2 never fired: **zero** samples showed
+a pack discharging, across every run. Charging also recovers on its own once the CPU
+drops from its PL2 burst to the PL1 steady state, which is why a single reading is
+misleading — the same machine under the same load reads 33 W, 0 W, or 15 W depending
+purely on when you look.
+
+The practical consequence: on this chassis a stalled charge under load is the EC
+budgeting correctly, not a fault. Worry about stage 2.
+
 ### Configuring chargewatch
 
 Optional, at `/etc/chargewatch.conf`. Sourced as shell only after `bash -n` passes,
