@@ -678,6 +678,7 @@ applies nothing until you uncomment one.
 |---|---|
 | `TCC_OFFSET` | Degrees below TjMax at which throttling begins. `0` means throttle at TjMax |
 | `PL1_UW` | Sustained package power, in microwatts |
+| `EPP` | The hardware governor's energy/performance hint — `performance`, `balance_performance`, `balance_power`, `power` |
 
 **TjMax is not 100 on every part.** Read yours before choosing an offset:
 
@@ -694,6 +695,42 @@ Re-run `sudo thinkfan-ex -powerunlock` after editing the config, or
 `sudo systemctl restart thinkpad-power-unlock` — it reports what it applied and
 the resulting throttle temperature, and exits non-zero if a write did not stick.
 
+#### `EPP`, and why it is the one that matters on battery
+
+The two limits above are ceilings. `EPP` is what decides how close to them the
+hardware governor actually goes, and on battery it is usually the binding
+constraint — not the ceilings, and not anything in the BIOS.
+
+`power-profiles-daemon` sets `EPP=balance_power` on battery in its `balanced`
+profile. Measured on the T480, 8 threads, 120 s, with `TCC_OFFSET=4` and
+`PL1_UW=22000000` held identical and verified per sample in both runs:
+
+| EPP | sustained package | all-core clock | from the pack |
+|---|---|---|---|
+| `balance_power` | 14.5 W | 2.39 GHz | 22.4 W |
+| `performance` | **21.9 W** | **2.93 GHz** | 31.7 W |
+
+That is the AC number reached on battery, for half again the pack draw. Two
+threads at `balance_power` sit at 9.0 W and *still* clock 2.4 GHz — the hint
+holds the frequency down even when nothing is near a power limit, which is why
+`CORE_PERF_LIMIT_REASONS` reports no reason for the clamp. It is not a limit.
+
+The quick way to the same place, no config needed:
+
+```bash
+powerprofilesctl set performance     # ppd's own lever; reverts on profile change
+```
+
+Setting `EPP` in the unlock config is for wanting it every boot and every resume.
+Note the ownership problem: `power-profiles-daemon`, TLP and tuned all write EPP
+too, on profile changes and on AC plug/unplug, so a one-shot write holds only
+until the next such event — and nothing orders `thinkpad-power-unlock` after
+those daemons at boot, so a one-shot write can lose that race outright. The
+script says so when it detects one of them running. **With `EPP` set, enable the
+watch unit**: it puts the value back and logs each correction like any other
+revert. If you would rather not have two things writing one file, set the profile
+with `powerprofilesctl` instead and leave `EPP` commented out.
+
 > **The firmware can claw these back under sustained load**, not only at boot. Both
 > limits revert together to the firmware defaults — `tcc4/pl1 22W` becomes
 > `tcc30/pl1 15W` — and stay reverted until something re-applies them. It is
@@ -706,9 +743,12 @@ the resulting throttle temperature, and exits non-zero if a write did not stick.
 >
 > No trigger has been found. Ruled out by measurement: adapter saturation (three
 > clean runs that each drove charge power to 0 W), temperature (it reverted at
-> 74 C and ran clean at 97 C), AC versus battery (seen on both), a userspace
-> daemon (`power-profiles-daemon` stays on `performance` and has no platform
-> driver on this chassis; no thermald/tlp/tuned), a kernel or ACPI event (the
+> 74 C and ran clean at 97 C, and on one later boot reverted at 81 C then ran
+> clean at 84 C), AC versus battery (seen on both, and three battery runs on one
+> boot split three ways), a userspace
+> daemon (`power-profiles-daemon` never writes either register, and has no
+> platform driver on this chassis; no thermald/tlp/tuned — note that it *does*
+> write EPP, which governs frequency but is not the claw-back), a kernel or ACPI event (the
 > journal is silent in every window), iGPU versus dGPU load, and elapsed time
 > (it has fired at t=12 s and at t=104 s). Nothing OS-visible distinguishes a
 > reverting run from a clean one, which points at the EC or SMM acting below the

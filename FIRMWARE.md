@@ -49,6 +49,11 @@ why `fwmap.sh` stamps them at the top of every report.
 | **think-lmi** | 79 BIOS setup settings | `firmware-attributes` | `LockBIOSSetting=Disable` | Read safe, **write = BIOS change** |
 | EFI variables (158, 21 Lenovo) | BIOS setup backing store | `efivarfs` | some RO | **Very high** on write |
 | SPI flash | BIOS/EC image | needs `flashrom` | n/a | **Bricking** |
+| `MSR 0x774` HWP_REQUEST / EPP | The frequency the governor actually picks | `cpufreq` sysfs | No | Low — and the largest measured lever here |
+
+That last row is not firmware, and it is in this table anyway: it outweighed
+every firmware knob below it on battery, and a map that stops at the firmware
+boundary is how it stayed hidden for four commits.
 
 ## Power and thermal — the part already in use
 
@@ -121,10 +126,18 @@ battery, `_IA` Intel-adaptive, `_VGA` discrete GPU present.
 | `IFC` | 25000 | **4500** | 4500 | 29000 | 71000 | **50** |
 | `STP` | - | **2000** | 2000 | 29000 | 71000 | **45** |
 
-**It explains the battery result.** Sustained package power measured 13.2-13.9 W
-on battery against 21.9 W on AC, and nothing in sysfs accounted for it — MMIO PL1
-read 22 W throughout. Every `_DC` row caps PL1 at 12-15 W. The firmware enforces
-a battery budget from this table, so raising MMIO PL1 buys nothing on battery.
+~~**It explains the battery result.**~~ **It does not — corrected 2026-09-06.**
+Every `_DC` row here does cap PL1 at 12-15 W, and sustained package power on
+battery did measure 13.2-13.9 W against 21.9 W on AC with MMIO PL1 reading 22 W
+throughout, which made this table look like the answer. It was a coincidence of
+numbers. Nothing was applying these rows: the `INT3400` zone is `disabled` at
+boot and stays that way. The battery result was
+[EPP](#the-battery-clamp-was-epp-not-firmware), and raising MMIO PL1 buys
+21.9 W on battery once the hint is out of the way.
+
+The table is still what DPTF *would* apply if something enabled it, which is why
+it stays here. It is a policy the machine carries, not a policy the machine was
+running.
 
 `MMC_PERFORMANCE` (25 W) and `MMC_COOL` (12 W) are the two Intelligent Cooling
 states DYTC switches between. `PSC_*` correspond to power-slider positions.
@@ -210,20 +223,72 @@ That reads as "on battery it reverts", not "under load it reverts", which is wha
 this file and the README previously said. Untested as a controlled pair; the
 experiment is one suspend on AC and one on battery with the watchdog stopped.
 
-## The battery clamp sets no limit-reason bit
+**Battery is not the discriminator either (2026-09-06).** Four 8-thread load runs
+on one boot, all on battery: three held their limits with zero drift — two of
+them witnessed at 1 Hz across 142 samples — and one reverted. Battery was
+constant across all four, so it cannot be what separates them.
 
-On battery the package pins at ~13.8 W while `CORE_PERF_LIMIT_REASONS` reports
-**no reason at all** for most of the run:
+That one run is the cleanest capture of the claw-back so far, because it landed
+inside the sampler's own stream instead of in a separate log:
 
-| | `nothing` | `PL1` | `thermal` |
-|---|---|---|---|
-| battery, 13.8 W sustained | **71** | 29 | 0 |
-| AC, 21.7 W sustained | 0 | 83 | 18 |
+```
+  t   pkgW  maxMHz  cpuC  cpu-limit
+  5.5  32.2   3314    81  PL2
+  6.0  26.5   2900    81  thermal
+  >>> LIMITS CHANGED at t=6.0s: tcc4/pl1 22W -> tcc30/pl1 15W
+  6.5  22.3   2900    70  thermal
+```
 
-So the DC budget is not a RAPL limit, not a thermal trip, and not PROCHOT — it is
-enforced by a path invisible to Intel's own limit reporting. Setting
-`AdaptiveThermalManagementBattery` to `MaximizePerformance` did **not** change it
-(13.8 W before and after), but that setting is expected to need a reboot.
+Both registers moved inside one 0.5 s sample, 6 s into a run that had pulled
+32 W and 81 C from a cold start with the fan still ramping through 2100 RPM. The
+temperature then pins at 70 C — TjMax − 30, the firmware default — which is the
+throttle point doing exactly what the reverted offset says.
+
+A later run on the same boot reached **84 C at the same 33 W peak and did not
+revert**. So a temperature threshold and a peak-power threshold are both ruled
+out as sufficient triggers. What is left: the excursion happened while the fan
+was still spinning up from cold, which the non-reverting runs did not do. That is
+a hypothesis with one supporting run, not a finding.
+
+## The battery clamp was EPP, not firmware
+
+**Corrected 2026-09-06.** This section used to be headed "the battery clamp sets
+no limit-reason bit" and concluded that a DC budget was being enforced by a path
+invisible to Intel's own limit reporting. The observation was right and the cause
+was wrong. The clamp is `energy_performance_preference`, which
+`power-profiles-daemon` programs to `balance_power` on battery in its `balanced`
+profile. It sets no bit in `CORE_PERF_LIMIT_REASONS` because it is not a limit —
+it is a hint to the hardware governor, and hints are not reported.
+
+Four 8-thread runs, one boot, all on battery, with TCC offset 4 and MMIO PL1 22 W
+verified per sample throughout:
+
+| EPP | limits held by | sustained pkg | all-core | `nothing` | `PL1` | `PL2` | `thermal` |
+|---|---|---|---|---|---|---|---|
+| `balance_power` | boot unlock | 14.5 W | 2382 MHz | 90 | 0 | 0 | 0 |
+| `balance_power` | watch unit | 14.5 W | 2390 MHz | 90 | 0 | 0 | 0 |
+| `performance` | nothing — clawed back at t=6 s | 14.7 W | 2400-2900 MHz | 0 | 25 | 11 | 39 |
+| `performance` | watch unit | **21.9 W** | **2931 MHz** | 0 | 73 | 17 | 0 |
+
+The last row is the AC figure — 21.7 W — reached on battery, for 120 s, at 31.7 W
+out of the pack. So no DC budget exists below that. What happens above it is
+untested: PL1 22 W was the binding limit in that run, reported by 73 of 90
+samples.
+
+The single measurement that proves it was a frequency hint and not a power
+budget: **two threads, 9.0 W package, still pinned at 2400 MHz.** Power sat a
+third under the ceiling and the frequency did not move.
+
+`MSR 0x774` HWP_REQUEST on battery reads `0xc0002a04` — min 4, **max 42**, so
+4.2 GHz is not capped anywhere; only the EPP byte (`0xc0`) is conservative.
+`max_perf_pct` is 100, `no_turbo` is 0, `scaling_max_freq` is 4200000. Nothing
+declares a 2.4 GHz ceiling. It is what the governor picks under that hint.
+
+Two consequences worth keeping in view. Every power measurement in this file
+taken before this date has an unrecorded EPP, so any AC-vs-battery comparison
+among them is confounded by whatever `power-profiles-daemon` was doing at the
+time. And the biggest single lever found on this machine so far was not in the
+firmware at all — it was one sysfs string, one layer above everything else here.
 
 ## DYTC — Lenovo Intelligent Cooling
 
@@ -265,16 +330,42 @@ The four that bear on this repo:
 | setting | value | options |
 |---|---|---|
 | `AdaptiveThermalManagementAC` | `MaximizePerformance` | `MaximizePerformance;Balanced` |
-| `AdaptiveThermalManagementBattery` | **`Balanced`** | `MaximizePerformance;Balanced` |
+| `AdaptiveThermalManagementBattery` | `Balanced` → **`MaximizePerformance`** | `MaximizePerformance;Balanced` |
 | `CPUPowerManagement` | `Automatic` | `Disable;Automatic` |
 | `SpeedStep` | `Enable` | `Disable;Enable` |
 
-`AdaptiveThermalManagementBattery = Balanced` is the likely BIOS-level selector
-behind the `_DC` rows in the DPTF policy table, and therefore behind the 12-15 W
-battery ceiling that no sysfs register accounted for. Setting it to
-`MaximizePerformance` is the obvious experiment. It is a **BIOS setting write**,
-backed by an EFI variable, so it is not in the reversible-at-reboot tier — it
-persists, and it is gated behind explicit permission here.
+### The write, and what it bought (2026-09-06)
+
+`AdaptiveThermalManagementBattery` was written to `MaximizePerformance` through
+this interface with the owner's permission. It behaved as documented: the value
+**persisted across a reboot**, and it was visible in BIOS setup afterwards, under
+Config → Power → Adaptive Thermal Management → Scheme for Battery. So the
+`firmware-attributes` write path is real and does reach the setup menu.
+
+It changed **nothing measurable**. The battery load run after the reboot gave
+14.5 W sustained at 2382 MHz with 90 of 90 samples reporting no limit reason —
+the same clamp, within noise of the 13.8 W recorded before the write. The
+hypothesis that it was the BIOS-level selector behind the battery ceiling is
+dead; see [The battery clamp was EPP](#the-battery-clamp-was-epp-not-firmware).
+
+### The SpeedStep submode is not exposed here
+
+The same BIOS page carries a second tree — Config → Power → Intel (R) SpeedStep
+technology — with its own **Mode for AC** and **Mode for Battery**, values
+`Maximum Performance` / `Battery Optimized`. On this machine the battery mode
+shipped as the optimized one, and it was set to `Maximum Performance` by hand in
+setup, along with the AC mode, on the same reboot as the write above.
+
+**think-lmi does not expose it.** All 79 attributes were dumped: there is a
+`SpeedStep` (`Enable`/`Disable`) and nothing else matching, no AC/Battery
+submode, so this knob is reachable only from the setup menu. That is a real limit
+on the claim that `firmware-attributes` beats poking EFI variables — it beats it
+for the 79 settings it carries, and there is at least one it does not carry.
+Candidate backing variables, unread: `CpuSetup-b08f97ff-…`,
+`SetupCpuFeatures-ec87d643-…`.
+
+Because both changes landed on the same reboot, neither is individually isolated.
+They do not need to be: the measured result is a null for the pair.
 
 `LockBIOSSetting = Disable`, so settings are not locked. Writes through this
 interface normally require the BIOS supervisor password via the driver's
@@ -312,12 +403,38 @@ power-related, and only `PWRS` (the AC-present flag) — these are the AC
 plug/unplug hooks. **No `_Qxx` handler writes power limits**, which rules out
 the EC event path as the claw-back mechanism.
 
-## Not mapped, for lack of tools
+## Not mapped
 
-Absent on this system: `flashrom`, `ectool`, `nvramtool`, `msr-tools`,
-`turbostat`, `powertop`. So SPI flash imaging and the EC command interface are
-unexplored — not because they are uninteresting, but because nothing here can
-reach them yet. The MSR path works regardless via `/dev/cpu/*/msr`.
+Not "everything is mapped now". What follows is the standing list of what is
+still dark, and what it would take to light up.
+
+**Missing tools.** Absent on this system: `flashrom`, `ectool`, `nvramtool`,
+`msr-tools`, `turbostat`, `powertop`. So SPI flash imaging and the EC command
+interface are unexplored — not because they are uninteresting, but because
+nothing here can reach them yet. The MSR path works regardless via
+`/dev/cpu/*/msr`. `turbostat` is the notable gap for this file's subject: it
+reads the per-core P-state residencies and limit reasons that everything above
+had to be inferred from RAPL deltas.
+
+**Module options not taken.** These change what the kernel will let anyone touch:
+
+| module / option | opens | why it is not set |
+|---|---|---|
+| `ec_sys.write_support=1` | writing EC RAM directly | **Very high risk.** The EC owns charging, fans and thermal cutoffs, and a bad byte is not undone by a reboot. Read-only is a deliberate choice, not an oversight |
+| `acpi_call` | invoking arbitrary AML, incl. `DYTC` | Not installed. This is the only route to DYTC while `platform_profile` is absent, and it runs firmware code with arguments nobody has validated |
+| `thinkpad_acpi.experimental=1` | extra `/proc/acpi/ibm` nodes on some models | Untested here; may expose nothing on a T480 |
+| `msr` write path | `0x1AD` turbo ratios, `0x1FC` C1E/EE-turbo, `0x150` undervolt | Loaded and readable. The writes are documented above and unexercised |
+| `intel_pstate=passive` | hands frequency to `cpufreq` governors | Would replace the HWP hint mechanism that turned out to matter most. Worth trying, but it changes the thing being measured |
+
+**Interfaces that exist and were only read.** `MSR 0x1AD` (per-core-count turbo
+multipliers) and `MSR 0x1FC` (C1E, energy-efficient turbo) are both unlocked and
+both untouched. `MSR 0x150` reads zeros on all five planes and may or may not
+accept a write — microcode `0xf6` carries the Plundervolt mitigation.
+
+**Not reachable from here at all.** `platform_profile` never registered, so DYTC
+has no sysfs entry point; the 158 EFI variables include settings think-lmi does
+not carry, and writing them is in the bricking tier; SMM is invisible by
+construction, and it remains the most likely home of the claw-back.
 
 18 ACPI-WMI devices are listed by GUID only; their methods are unenumerated.
 158 EFI variables are listed by name only, 21 of them Lenovo/Setup namespaces
@@ -362,6 +479,15 @@ observe, reboot to confirm it resets, and only then automate it.
 6. **What enables DPTF in the wild?** The zone is `disabled` at boot and nothing
    in userspace turns it on here. If firmware can enable it autonomously under
    load, that closes the loop.
-7. **Which path enforces the DC budget?** `_DC` rows cap PL1 at 12-15 W and the
-   machine obeys while MMIO PL1 still reads 22 W, so something other than that
-   register does the clamping.
+7. ~~Which path enforces the DC budget?~~ **Answered — there is no DC budget.**
+   The 12-15 W battery ceiling was `power-profiles-daemon` setting EPP to
+   `balance_power`. With EPP at `performance` and PL1 held at 22 W, the machine
+   sustains 21.9 W on battery. The `_DC` rows in the policy table cap what DPTF
+   would apply if it ran; nothing was applying them.
+8. **What triggers the claw-back?** Still open, and now with battery state,
+   temperature and peak power all ruled out as sufficient. The surviving
+   hypothesis is a power/thermal excursion taken while the fan is still ramping
+   from cold — one supporting run, no controlled pair.
+9. **Is there a DC ceiling above 22 W at all?** Untested. PL1 22 W was the
+   binding limit in the run that reached 21.9 W, so the question of what the
+   pack and the EC allow above that is unprobed.
