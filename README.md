@@ -741,18 +741,28 @@ with `powerprofilesctl` instead and leave `EPP` commented out.
 > temperature. Check with `systemctl restart thinkpad-power-unlock`, which reprints
 > the live values.
 >
-> No trigger has been found. Ruled out by measurement: adapter saturation (three
-> clean runs that each drove charge power to 0 W), temperature (it reverted at
-> 74 C and ran clean at 97 C, and on one later boot reverted at 81 C then ran
-> clean at 84 C), AC versus battery (seen on both, and three battery runs on one
-> boot split three ways), a userspace
+> No trigger has been found. **Read the list below as "did not reproduce", not as
+> "ruled out".** The whole branch has caught three events across dozens of 90-120 s
+> runs — call it one or two percent per minute of load — so a short run that stays
+> clean is what you would expect whether the hypothesis is right or wrong. Each
+> line here rests on one or two non-reproductions:
+>
+> Adapter saturation (three clean runs that each drove charge power to 0 W),
+> temperature (it reverted at 74 C and ran clean at 97 C; on a later boot it
+> reverted at 81 C and ran clean at 84 C), AC versus battery (seen on both, and
+> four battery runs on one boot split one to three), fan state (it reverted from a
+> cold fan once, then held from an equally cold fan at 34 W and 85 C), a userspace
 > daemon (`power-profiles-daemon` never writes either register, and has no
 > platform driver on this chassis; no thermald/tlp/tuned — note that it *does*
-> write EPP, which governs frequency but is not the claw-back), a kernel or ACPI event (the
-> journal is silent in every window), iGPU versus dGPU load, and elapsed time
-> (it has fired at t=12 s and at t=104 s). Nothing OS-visible distinguishes a
-> reverting run from a clean one, which points at the EC or SMM acting below the
-> kernel's view.
+> write EPP, which governs frequency but is not the claw-back), a kernel or ACPI
+> event (the journal is silent in every window), iGPU versus dGPU load, and
+> elapsed time (it has fired at t=6 s, t=12 s and t=104 s). Nothing OS-visible
+> distinguishes a reverting run from a clean one, which points at the EC or SMM
+> acting below the kernel's view.
+>
+> The way to make progress is dwell time, not more hypotheses: one long soak with
+> the watch unit off and everything logged, rather than another short run designed
+> to discriminate between conditions that no single event can separate.
 >
 > An earlier note recorded PL1 reverting first with TCC following half a second
 > later. The captures since show both moving inside a single 0.5 s sample, so the

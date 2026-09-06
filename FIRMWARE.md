@@ -328,8 +328,11 @@ turbo ratios: 42 / 42 / 39 / 39 for 1 / 2 / 3 / 4 active cores
 - **C1E auto-promotion is already disabled**, which is one of the two things
   `MSR 0x1FC` was listed above as a candidate for changing.
 - CPUID reports base 2100 MHz while `MSR_CONFIG_TDP_NOMINAL` reports base ratio
-  19 and sysfs reports 1900000. Unexplained, and worth knowing before anyone
-  treats "base clock" as a single number on this part.
+  19 and sysfs reports 1900000. Most likely two definitions rather than a
+  contradiction — `CONFIG_TDP_NOMINAL` is the guaranteed ratio at the configured
+  TDP level, and `HWP_CAPABILITIES` guar 19 agrees with it, while CPUID 0x16
+  reports the marketing base. Unverified against the datasheet. Either way, do
+  not treat "base clock" as a single number on this part.
 
 Same two EPP arms as above, re-run under turbostat, 90 s of `stress -c 8` each,
 on battery with TCC 4 / PL1 22 W held:
