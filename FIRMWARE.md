@@ -99,6 +99,70 @@ exist), which live in an SSDT field region rather than as constants.
 > `thinkpad-power-unlock-watch` **stopped**, or the watchdog repairs the limits
 > in 0.5 s and there is nothing left to correlate against.
 
+## The OEM thermal policy, decoded
+
+`data_vault` is not opaque. It is an LZMA-alone stream after a `REPO` marker,
+2263 bytes unpacking to 55 KB of "DPTF Policy Configuration": one row of power
+limits per named configuration. `fwmap.sh` decodes it to `dptf_policy.txt`.
+
+Values are milliwatts; `TccOffset` is degrees below TjMax. Suffixes: `_DC` on
+battery, `_IA` Intel-adaptive, `_VGA` discrete GPU present.
+
+| config | PL1 | PL1MAX | PL1MIN | PL2 | PL4 | TccOffset |
+|---|---|---|---|---|---|---|
+| `MMC_PERFORMANCE` | 25000 | 25000 | 5000 | 29000 | 71000 | - |
+| `MMC_PERFORMANCE_DC` | 15000 | 15000 | 5000 | 25000 | 51000 | - |
+| `MMC_COOL` | 12000 | 12000 | 3000 | 29000 | 71000 | - |
+| `STD_U42` | 25000 | 25000 | 13000 | 29000 | 71000 | - |
+| `STD_U42_DC` | 15000 | 15000 | 13000 | 25000 | 51000 | - |
+| `PSC_7` | 25000 | 25000 | 13000 | 25000 | 71000 | - |
+| `PSC_8_DC` | 15000 | 15000 | 13000 | 25000 | 71000 | - |
+| `IFC` | 25000 | **4500** | 4500 | 29000 | 71000 | **50** |
+| `STP` | - | **2000** | 2000 | 29000 | 71000 | **45** |
+
+**It explains the battery result.** Sustained package power measured 13.2-13.9 W
+on battery against 21.9 W on AC, and nothing in sysfs accounted for it — MMIO PL1
+read 22 W throughout. Every `_DC` row caps PL1 at 12-15 W. The firmware enforces
+a battery budget from this table, so raising MMIO PL1 buys nothing on battery.
+
+`MMC_PERFORMANCE` (25 W) and `MMC_COOL` (12 W) are the two Intelligent Cooling
+states DYTC switches between. `PSC_*` correspond to power-slider positions.
+
+## DPTF writes these registers — demonstrated
+
+The DPTF path can be driven on demand, and doing so reproduces the claw-back's
+signature. The `INT3400` thermal zone starts `disabled`; enabling it makes the
+kernel run `_OSC`, which firmware answers by calling `DYTC(0x000F0001)`.
+
+```
+trial 1: TCC 4 -> 3 after 2ms      PL1 22000000 -> 22000000
+trial 2: TCC already 3             PL1 15000000
+trial 3: TCC already 3             PL1 15000000
+zone left ENABLED:  TCC=3  PL1=15000000
+```
+
+Two things are established by this:
+
+1. **Firmware writes the TCC offset register**, within 2 ms of the handshake.
+2. **Firmware forces MMIO PL1 to exactly 15000000** and holds it there *against*
+   `power-unlock` writing 22 W. That is the claw-back's PL1 value precisely.
+
+Disabling the zone releases the clamp and the raised limits hold again. Nothing
+here persists past a reboot.
+
+Reproduce it with (note it **overrides your power limits while enabled**):
+
+```bash
+sudo systemctl stop thinkpad-power-unlock-watch    # or it fights the firmware
+echo enabled  > /sys/class/thermal/thermal_zone1/mode
+echo disabled > /sys/class/thermal/thermal_zone1/mode
+```
+
+> **This is not proof that the wild claw-back is this path.** The forced case
+> lands TCC at 3; the observed claw-back lands it at 30. The PL1 half matches
+> exactly and the mechanism demonstrably writes both registers, but the TCC half
+> does not match, so this is a strong candidate and not a closed case.
+
 ## DYTC — Lenovo Intelligent Cooling
 
 The most interesting thing found so far, and the leading claw-back suspect.
@@ -173,4 +237,14 @@ observe, reboot to confirm it resets, and only then automate it.
 2. **Does `odvp0` move at the revert?** Same probe, same non-result.
 3. **Is DYTC invoked during load?** Nothing observed yet; no OS-side trigger
    exists on this machine.
-4. **What is in `data_vault`?** 2263 bytes of OEM thermal policy, undecoded.
+4. ~~What is in `data_vault`?~~ **Answered** — decoded above; `fwmap.sh` unpacks
+   it on every run.
+5. **Why does forced DPTF land TCC at 3 when the wild claw-back lands it at 30?**
+   Same register, same subsystem, different value. Until that is explained the
+   DPTF path is a strong candidate rather than the identified cause.
+6. **What enables DPTF in the wild?** The zone is `disabled` at boot and nothing
+   in userspace turns it on here. If firmware can enable it autonomously under
+   load, that closes the loop.
+7. **Which path enforces the DC budget?** `_DC` rows cap PL1 at 12-15 W and the
+   machine obeys while MMIO PL1 still reads 22 W, so something other than that
+   register does the clamping.

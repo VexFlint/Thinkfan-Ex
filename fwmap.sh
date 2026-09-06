@@ -107,6 +107,41 @@ note "msr       $(wc -l < "$OUT/msr/msr.txt") lines; PL1 lock state in msr/msr.t
         for i in $(seq 0 19); do [ -e "$P/odvp$i" ] && printf '   odvp%-3s %s\n' "$i" "$(cat "$P/odvp$i")"; done
         [ -r "$P/data_vault" ] && cp "$P/data_vault" "$OUT/acpi/data_vault.bin" 2>/dev/null
     fi
+    # The data vault is the OEM's own thermal policy: an LZMA-alone stream after
+    # a "REPO" marker, holding one row of power limits per named configuration.
+    # It is the most useful single artefact on the machine and it is unreadable
+    # without unpacking, so unpack it here rather than leaving a blob behind.
+    if [ -s "$OUT/acpi/data_vault.bin" ]; then
+        python3 - "$OUT/acpi/data_vault.bin" "$OUT/dptf_policy.txt" <<'PYDV'
+import sys, re, lzma, collections
+raw = open(sys.argv[1], "rb").read()
+i = raw.find(b"REPO")
+if i < 0:
+    sys.exit(0)
+try:
+    d = lzma.LZMADecompressor(format=lzma.FORMAT_ALONE).decompress(raw[i+4:])
+except Exception as e:
+    open(sys.argv[2], "w").write("decompress failed: %s\n" % e); sys.exit(0)
+toks = [m.group().decode() for m in re.finditer(rb"[\x20-\x7e]{2,40}", d)]
+tbl = collections.defaultdict(dict)
+i = 0
+while i < len(toks) - 3:
+    if toks[i].startswith("\\_SB_"):
+        key, val, cfg = toks[i+1], toks[i+2], toks[i+3]
+        if re.fullmatch(r"[0-9]{1,6}", val) and re.fullmatch(r"[A-Z][A-Z0-9_]*", cfg):
+            tbl[cfg][key] = int(val); i += 4; continue
+    i += 1
+KEYS = ["PL1PowerLimit","PL1MAX","PL1MIN","PL2PowerLimit","PL4PowerLimit","PL1TimeWindow","TccOffset"]
+out = open(sys.argv[2], "w")
+out.write("OEM DPTF policy, decoded from data_vault (%d bytes -> %d)\n" % (len(raw), len(d)))
+out.write("_DC = on battery, _IA = Intel adaptive, _VGA = discrete GPU present\n\n")
+out.write("%-24s%s\n" % ("config", "".join("%14s" % k for k in KEYS)))
+for cfg in sorted(tbl):
+    out.write("%-24s%s\n" % (cfg, "".join("%14s" % tbl[cfg].get(k, "-") for k in KEYS)))
+out.close()
+PYDV
+        note "dptf      OEM policy decoded -> dptf_policy.txt ($(grep -c . "$OUT/dptf_policy.txt" 2>/dev/null || echo 0) lines)"
+    fi
     PT=/sys/bus/pci/devices/0000:00:04.0
     if [ -d "$PT" ]; then
         echo; echo "== processor thermal device"
