@@ -217,10 +217,13 @@ PL1_PATH = "/sys/class/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_p
 
 def limits():
     """The unit applies these at boot, verifies them, and exits 0 -- which says
-    nothing about whether they survive. They were seen back at the firmware
-    defaults mid-run once in three runs, and held for a full 300s run after that,
-    so the revert is real but intermittent. Nothing reverts them at idle: sample
-    every tick and note the exact second, since that is the only way to catch it."""
+    nothing about whether they survive. Both limits have been caught reverting to
+    the firmware defaults mid-run, once in five valid runs at full load on AC and
+    once more on battery, at t=12s and t=104s -- real, intermittent, and with no
+    trigger identified. Nothing reverts them at idle. Sampling every tick and
+    printing the exact second is the only way to catch it, so do not throttle this
+    down; a revert that goes unrecorded looks exactly like a run that never had
+    the limits applied, which is how three trials were wasted once already."""
     try:
         tcc = open(TCC_PATH[0]).read().strip() if TCC_PATH else "?"
     except Exception:
