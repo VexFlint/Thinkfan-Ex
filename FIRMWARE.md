@@ -510,6 +510,52 @@ afterwards**; nothing on this machine is undervolted.
 > a real undervolt is the one place in this file where a wrong value corrupts
 > data silently rather than announcing itself.
 
+### −50 mV, and proof that the regulator applies it
+
+The −15 mV test above proved the register accepted a write. −50 mV proves the
+voltage regulator acts on it.
+
+First attempt, and why it failed: four alternating 90 s runs of `stress -c 8` on
+AC in the PL1-limited regime, 0 / −50 / 0 / −50. Package power fell monotonically
+across all four — 24.87, 23.67, 23.42, 22.08 W — regardless of voltage, because
+the chassis was soaking heat the whole time. Each −50 arm was ~1.2 W under the
+0 arm before it, but the drift between two 0 arms was 1.45 W. **The effect and
+the confound were the same size.** A power-limited comparison cannot answer this:
+the governor is free to trade the saved watts for clock, and the clock was
+falling too.
+
+Second attempt, at a pinned frequency where PL1 is far away and nothing can move
+but voltage. All cores capped at 2.0 GHz, 8 threads, six 40 s arms alternating,
+one continuous load so the machine never cools between them:
+
+| arm | `Bzy_MHz` | `CorWatt` | `PkgWatt` | `PkgTmp` |
+|---|---|---|---|---|
+| 0 mV | 2000 | 9.09 | 10.88 | 56 |
+| −50 mV | 2000 | **8.65** | 10.44 | 56 |
+| 0 mV | 2000 | 8.99 | 10.78 | 57 |
+| −50 mV | 2000 | **8.60** | 10.38 | 55 |
+| 0 mV | 2000 | 8.95 | 10.74 | 56 |
+| −50 mV | 2000 | **8.65** | 10.44 | 55 |
+
+Identical clock, identical IPC (1.19 in all six), temperatures within 2 C, and
+**every undervolted arm below every baseline arm with no overlap**: 9.01 W mean
+against 8.63 W, −4.2 % core power. The offset is real and the regulator applies
+it.
+
+Stability at −50 mV: 749 SHA-256 passes over a 128 MB buffer across 8 parallel
+workers, **zero mismatches**, no machine checks, `CoreThr` 0. A wrong answer is
+the failure mode that matters with an undervolt — a hang announces itself, silent
+corruption does not — so the check is for wrong answers, not for uptime.
+
+The offset was set back to 0 afterwards. Nothing is undervolted, and nothing here
+persists across a reboot anyway.
+
+> **Do not read −4.2 % as the payoff.** This was measured at 2.0 GHz, where the
+> part already runs near its voltage floor. The regime an undervolt is actually
+> for is the power-limited one, where the saved watts come back as clock — and
+> that is exactly the measurement the thermal drift above ruined. Quantifying it
+> needs the alternating protocol with a fixed thermal starting point per arm.
+
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
 
@@ -621,3 +667,14 @@ observe, reboot to confirm it resets, and only then automate it.
 9. **Is there a DC ceiling above 22 W at all?** Untested. PL1 22 W was the
    binding limit in the run that reached 21.9 W, so the question of what the
    pack and the EC allow above that is unprobed.
+10. **Why does the package sustain 24.87 W with MMIO PL1 set to 22 W?** Measured
+   on AC over a full 90 s run, so it is not the 28 s window letting a transient
+   through. 24.87 W is within noise of the *MSR* copy's 25 W. If the MMIO copy is
+   not the binding one here, "the hardware enforces min(MSR, MMIO)" — which this
+   file and the README both state, and which `power-unlock` is built on — is
+   wrong or incomplete on this part. The battery runs do not settle it: they
+   never reached either limit.
+11. **Why did the first AC run report 16 SMIs and 16 `CoreThr` events when every
+   battery run reported zero of both?** Only the first run after plugging in.
+   Charging is the obvious difference, and the SMI counter is the instrument the
+   claw-back hunt is counting on, so what raises it here is worth knowing.
