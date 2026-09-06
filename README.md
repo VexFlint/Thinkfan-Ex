@@ -697,8 +697,10 @@ the resulting throttle temperature, and exits non-zero if a write did not stick.
 > **The firmware can claw these back under sustained load**, not only at boot. Both
 > limits revert together to the firmware defaults — `tcc4/pl1 22W` becomes
 > `tcc30/pl1 15W` — and stay reverted until something re-applies them. It is
-> intermittent: **once in five** valid runs at full load on AC, plus once more on
-> battery. The symptom is a machine that suddenly pins at the *firmware* throttle
+> intermittent: **once in ten** valid runs at full load on AC, plus once more on
+> battery. (An earlier figure of one in five was based on the first five trials;
+> five further clean runs halved it. Both numbers rest on a single revert, so
+> treat the rate as "occasional", not as measured.) The symptom is a machine that suddenly pins at the *firmware* throttle
 > temperature. Check with `systemctl restart thinkpad-power-unlock`, which reprints
 > the live values.
 >
@@ -759,8 +761,8 @@ Three ways the limits could be lost, and what each actually does on a T480
 | | Result | How it was checked |
 |---|---|---|
 | **Reboot** | Holds | Unit runs at boot; `TCC 4 / PL1 22 W` live in sysfs afterwards |
-| **Sustained load** | Usually | Clean in four of five valid 300 s runs on AC; the fifth reverted at t=12 s. See the claw-back note above |
-| **Suspend / resume** | Depends on load | Idle: config moved aside so the unit no-ops, 75 s S3, both limits came back untouched. Under load: suspended mid-run, came back at firmware defaults — the unit restored them 0.5 s later |
+| **Sustained load** | Usually | Clean in nine of ten valid 300 s runs on AC; the other reverted at t=12 s. See the claw-back note above |
+| **Suspend / resume** | Depends on power source | On AC, idle: 75 s S3 with the unit no-op'd, both limits came back untouched. On battery: reverted to firmware defaults on resume, both when loaded and when idle — see `FIRMWARE.md` |
 
 The load run is also the positive control that the limits are doing something:
 package power sits at **21.9 W sustained** against the 22 W PL1, and the throttle
