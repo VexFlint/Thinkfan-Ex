@@ -623,6 +623,14 @@ drops from its PL2 burst to the PL1 steady state, which is why a single reading 
 misleading — the same machine under the same load reads 33 W, 0 W, or 15 W depending
 purely on when you look.
 
+Re-measured later on the same chassis, the taper reproduces closely (31.9 W at
+0.5 s, 3.3 W at 52 s, 0 W at 68-84 s, 14.8 W at 116 s). What the table above does
+not show is that the recovery is **not** a one-way settling: charge power climbed
+back to ~24 W by t=196 s, then shed to 0 W again at 228 s and 260 s. The EC keeps
+cycling between feeding the packs and feeding the load for as long as the load
+lasts, so "recovers once the CPU settles" understates it — expect oscillation, not
+a single dip.
+
 The practical consequence: on this chassis a stalled charge under load is the EC
 budgeting correctly, not a fault. Worry about stage 2.
 
@@ -686,13 +694,27 @@ Re-run `sudo thinkfan-ex -powerunlock` after editing the config, or
 `sudo systemctl restart thinkpad-power-unlock` — it reports what it applied and
 the resulting throttle temperature, and exits non-zero if a write did not stick.
 
-> **The firmware can claw these back under sustained load**, not only at boot. It
-> was observed reverting both limits mid-run — PL1 first, TCC half a second later
-> — in one of three identical runs, with no trigger identified, and has not
-> recurred since across a full 300 s run. Treat it as real but intermittent. The
-> symptom is a machine that suddenly pins at the *firmware* throttle temperature.
-> Check with `systemctl restart thinkpad-power-unlock`, which reprints the live
-> values.
+> **The firmware can claw these back under sustained load**, not only at boot. Both
+> limits revert together to the firmware defaults — `tcc4/pl1 22W` becomes
+> `tcc30/pl1 15W` — and stay reverted until something re-applies them. It is
+> intermittent: **once in five** valid runs at full load on AC, plus once more on
+> battery. The symptom is a machine that suddenly pins at the *firmware* throttle
+> temperature. Check with `systemctl restart thinkpad-power-unlock`, which reprints
+> the live values.
+>
+> No trigger has been found. Ruled out by measurement: adapter saturation (three
+> clean runs that each drove charge power to 0 W), temperature (it reverted at
+> 74 C and ran clean at 97 C), AC versus battery (seen on both), a userspace
+> daemon (`power-profiles-daemon` stays on `performance` and has no platform
+> driver on this chassis; no thermald/tlp/tuned), a kernel or ACPI event (the
+> journal is silent in every window), iGPU versus dGPU load, and elapsed time
+> (it has fired at t=12 s and at t=104 s). Nothing OS-visible distinguishes a
+> reverting run from a clean one, which points at the EC or SMM acting below the
+> kernel's view.
+>
+> An earlier note recorded PL1 reverting first with TCC following half a second
+> later. The captures since show both moving inside a single 0.5 s sample, so the
+> ordering is unresolved at that sampling rate rather than established.
 
 ### Does it stick?
 
@@ -702,19 +724,23 @@ Three ways the limits could be lost, and what each actually does on a T480
 | | Result | How it was checked |
 |---|---|---|
 | **Reboot** | Holds | Unit runs at boot; `TCC 4 / PL1 22 W` live in sysfs afterwards |
-| **Sustained load** | Held | `burnboth.sh 300` — 180 samples, no `LIMITS CHANGED` line. But see the claw-back note above: one earlier run did revert |
-| **Suspend / resume** | Holds, unaided | Config moved aside so the unit no-ops, then a 75 s S3 cycle — both limits came back untouched |
+| **Sustained load** | Usually | Clean in four of five valid 300 s runs on AC; the fifth reverted at t=12 s. See the claw-back note above |
+| **Suspend / resume** | Depends on load | Idle: config moved aside so the unit no-ops, 75 s S3, both limits came back untouched. Under load: suspended mid-run, came back at firmware defaults — the unit restored them 0.5 s later |
 
 The load run is also the positive control that the limits are doing something:
 package power sits at **21.9 W sustained** against the 22 W PL1, and the throttle
 reason flips from `PL1` to `thermal` exactly as the package reaches **96 C** —
 the TCC offset 4 trip point, engaging where predicted.
 
-The resume result is the surprising one. `thinkpad-power-unlock.service` is
-`WantedBy=suspend.target`, so it does re-run on every wake (the unit's
+The resume result depends on what the machine was doing. `thinkpad-power-unlock.service`
+is `WantedBy=suspend.target`, so it re-runs on every wake — the unit's
 `InvocationID` changes, which is how you tell a genuine re-run from a value that
-was simply never disturbed) — but with it deliberately disabled the firmware left
-both limits alone anyway. The resume hook is cheap insurance, not load-bearing.
+was simply never disturbed. Suspend an **idle** machine with the unit deliberately
+disabled and the firmware leaves both limits alone. Suspend one **under load** and
+they come back at the firmware defaults; the unit then restores them within half a
+second, which is visible in `burnboth.sh` as a `LIMITS CHANGED` pair 0.5 s apart
+straddling the sleep. So the hook does nothing on an idle resume and real work on
+a loaded one.
 
 > If you re-test this yourself, suspend with **`systemctl suspend`**, not
 > `rtcwake -m mem`. `rtcwake` writes straight to `/sys/power/state`, which never
