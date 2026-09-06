@@ -290,6 +290,97 @@ among them is confounded by whatever `power-profiles-daemon` was doing at the
 time. And the biggest single lever found on this machine so far was not in the
 firmware at all — it was one sysfs string, one layer above everything else here.
 
+## What turbostat adds (installed 2026-09-06)
+
+`extra/turbostat`, 266 KiB, one package. It should have been the first thing
+installed on this machine and it was the last. Everything in this file up to here
+was inferred from RAPL energy deltas and one limit-reason register; turbostat
+reads the platform's own decode and the per-core residencies directly.
+
+Its startup dump alone settles several things that were open or assumed:
+
+```
+MSR_HWP_CAPABILITIES: 0x0108132a (high 42 guar 19 eff 8 low 1)
+MSR_HWP_REQUEST:      0xc0002a04 (min 4 max 42 des 0 epp 0xc0 window 0x0 pkg 0x0)
+MSR_MISC_PWR_MGMT:    0x00401cc0 (ENable-EIST_Coordination DISable-EPB DISable-OOB)
+EPB: 8 (custom)
+MSR_IA32_POWER_CTL:   0x0024005d (C1E auto-promotion: DISabled)
+MSR_PKG_POWER_INFO:   0x00000078 (15 W TDP, RAPL 0 - 0 W)
+MSR_PKG_POWER_LIMIT:  0x4280e800dd80c8 (UNlocked)
+  PKG Limit #1: ENabled (25.000 W, 28.000000 sec, clamp ENabled)
+  PKG Limit #2: ENabled (29.000 W, 0.002441 sec, clamp DISabled)
+  PKG Limit #4: 71.000000 W (locked)
+MSR_IA32_TEMPERATURE_TARGET: 0x04640000 (96 C) (100 default - 4 offset)
+turbo ratios: 42 / 42 / 39 / 39 for 1 / 2 / 3 / 4 active cores
+```
+
+- **PL1's window is 28 s**, and its clamp bit is enabled. Neither was known here.
+  A 28 s averaging window is longer than several of the load runs in this file
+  spent at peak, which matters for how their first samples read.
+- **PL4 is 71 W and locked** — the only power limit on this part that is.
+- **EPB is disabled in `MSR_MISC_PWR_MGMT`**, so the legacy energy-perf-bias knob
+  (`EPB: 8`) is inert and HWP's EPP byte is the live one. Anything that tries to
+  tune this machine through `x86_energy_perf_policy` is writing to a register the
+  hardware is ignoring.
+- **All-core turbo is 3.9 GHz**, so the 2.93 GHz measured at `performance` is
+  power-limited, not ratio-limited, and the 2.39 GHz at `balance_power` is
+  neither — it is the hint.
+- **C1E auto-promotion is already disabled**, which is one of the two things
+  `MSR 0x1FC` was listed above as a candidate for changing.
+- CPUID reports base 2100 MHz while `MSR_CONFIG_TDP_NOMINAL` reports base ratio
+  19 and sysfs reports 1900000. Unexplained, and worth knowing before anyone
+  treats "base clock" as a single number on this part.
+
+Same two EPP arms as above, re-run under turbostat, 90 s of `stress -c 8` each,
+on battery with TCC 4 / PL1 22 W held:
+
+| | `balance_power` | `performance` |
+|---|---|---|
+| `Bzy_MHz` | 2394 | 3003 |
+| `PkgWatt` | 14.91 | 23.91 |
+| `CorWatt` | 13.07 | 22.01 |
+| **`UncMHz`** | **2100** | **2600** |
+| `PkgTmp` | 66 | 83 |
+| `SysWatt` | 22.19 | 32.62 |
+| `IPC` | 1.19 | 1.19 |
+| `CoreThr` | 0 | 0 |
+| `SMI` | 0 | 0 |
+
+**`UncMHz` is new information.** The hint moves the uncore/ring clock as well as
+the cores, 2100 → 2600 MHz. No instrument used in this file before could see
+that, and it is part of why `balance_power` costs more than the core ratio alone
+suggests — IPC is identical at 1.19, so the work per clock did not change; the
+clocks did, both of them.
+
+**`SMI` = 0 across both runs** is the useful baseline for the claw-back hunt. If
+the mechanism is SMM — the standing hypothesis, since nothing OS-visible
+distinguishes a reverting run — then a run that reverts should show a non-zero
+SMI count where these show none. That is a direct test, and it did not exist
+before this tool was on the machine.
+
+**One turbostat column is broken on this part.** `PKG_%` — the RAPL package
+throttle-time accumulator from `MSR_PKG_PERF_STATUS` — read `0.00` in all 100
+one-second intervals of a run whose `CORE_PERF_LIMIT_REASONS` reported PL1 in
+most samples, at 22.6 W against a 22 W limit. Two different registers, and only
+`0x64f` works here. Do not swap the instrument.
+
+### The cold-fan hypothesis did not survive
+
+The one hypothesis left standing for the claw-back was that the reverting run's
+excursion happened while the fan was still ramping from cold. Tested directly:
+fan at level 1 and 2468 RPM, package 44 C, EPP `performance`, watch unit off,
+limits at TCC 4 / PL1 22 W, 90 s of 8-thread load, witnessed at 1 Hz and sampled
+by turbostat at 1 Hz alongside.
+
+It reached 34 W peak and 85 C — hotter and harder than the run that reverted —
+and **did not revert**. 108 of 108 witness samples flat at `tcc=4 pl1=22000000`,
+zero SMIs, zero NMIs, `CoreThr` 0 throughout.
+
+So the count is now one revert in five comparable battery runs, with battery
+state, temperature, peak power and fan state each individually ruled out as the
+trigger. The honest position is that short runs are the wrong instrument for an
+event this rare, not that the trigger is exotic.
+
 ## DYTC — Lenovo Intelligent Cooling
 
 The most interesting thing found so far, and the leading claw-back suspect.
@@ -409,12 +500,11 @@ Not "everything is mapped now". What follows is the standing list of what is
 still dark, and what it would take to light up.
 
 **Missing tools.** Absent on this system: `flashrom`, `ectool`, `nvramtool`,
-`msr-tools`, `turbostat`, `powertop`. So SPI flash imaging and the EC command
-interface are unexplored — not because they are uninteresting, but because
-nothing here can reach them yet. The MSR path works regardless via
-`/dev/cpu/*/msr`. `turbostat` is the notable gap for this file's subject: it
-reads the per-core P-state residencies and limit reasons that everything above
-had to be inferred from RAPL deltas.
+`msr-tools`, `powertop`. So SPI flash imaging and the EC command interface are
+unexplored — not because they are uninteresting, but because nothing here can
+reach them yet. The MSR path works regardless via `/dev/cpu/*/msr`.
+`turbostat` was on this list and is now installed; see
+[What turbostat adds](#what-turbostat-adds-installed-2026-09-06).
 
 **Module options not taken.** These change what the kernel will let anyone touch:
 
