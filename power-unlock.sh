@@ -2,10 +2,10 @@
 # Re-apply CPU power/thermal limits that Lenovo's firmware programs
 # conservatively and reprograms at every boot.
 #
-# Resume is covered too (the unit is WantedBy=suspend.target), but on the one
-# T480 cycle measured so far it was not needed: with this script deliberately
-# no-op'd across a 75s S3 suspend, both limits came back untouched. Kept as
-# insurance -- it costs ~26ms -- not as a known requirement.
+# Resume is covered too (the unit is WantedBy=suspend.target), and it earns its
+# place: suspending an *idle* T480 leaves both limits untouched, but a machine
+# suspended under load came back at the firmware defaults, and this unit put them
+# right 0.5s later. Idle resume needs nothing; loaded resume does.
 #
 #   TCC offset   how far BELOW TjMax the CPU starts throttling. The firmware
 #                ships a large offset on some chassis (30 on a T480, i.e. throttle
