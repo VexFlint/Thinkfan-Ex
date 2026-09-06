@@ -601,6 +601,41 @@ three single-thread turbo bursts, no machine checks, offsets intact afterwards.
 > and idle transitions, which is where these fail first. Two minutes of hashing
 > rules out the crudest failure only. Nothing was left applied.
 
+### −100 mV, and where the curve is going
+
+Same two sweeps at −100 mV on core and cache (readback `-99.61`), plus a probe
+aimed at the regime an all-core hash loop never visits: ten single-thread bursts
+at max turbo with idle gaps between them, which is where undervolts fail first.
+
+| | 0 mV | −100 mV |
+|---|---|---|
+| pinned 2.0 GHz, `CorWatt` | 9.09 / 9.04 / 9.16 | **6.94 / 6.96 / 6.99** |
+| pinned 2.0 GHz, `PkgTmp` | 57 | **52** |
+| unpinned, `Bzy_MHz` | 2888 / 2884 / 2881 | **3181 / 3178 / 3178** |
+| unpinned, `PkgWatt` | 21.90 | 21.92 |
+
+**−23.5 % core power at a fixed clock, or +295 MHz (+10.2 %) at a fixed 21.9 W**,
+with the two power figures 0.02 W apart and temperatures within a degree. IPC was
+1.20 in all six unpinned arms and 1.19 in all six pinned ones.
+
+The whole set so far, on one machine, one protocol:
+
+| offset | planes | core power at 2.0 GHz | all-core clock at 21.9 W |
+|---|---|---|---|
+| 0 | — | 9.10 W | 2884 MHz |
+| −50 | core | −4.2 % | not measured |
+| −80 | core + cache | −18.1 % | 3093 MHz (+8.8 %) |
+| −100 | core + cache | −23.5 % | 3179 MHz (+10.2 %) |
+
+**The returns are flattening.** A quarter more offset from −80 to −100 bought
+about a fifth as much clock as the step before it. Whatever the stability limit
+turns out to be, the useful range on this part looks like it ends well before it.
+
+Stability at −100 mV: 781 SHA-256 passes across 8 workers, ten single-thread
+turbo bursts with idle gaps, zero mismatches, no machine checks. Still not
+validation — see the caveat above, which applies with more force at this offset.
+Nothing was left applied; all five planes read 0.00 mV.
+
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
 
