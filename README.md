@@ -716,6 +716,41 @@ the resulting throttle temperature, and exits non-zero if a write did not stick.
 > later. The captures since show both moving inside a single 0.5 s sample, so the
 > ordering is unresolved at that sampling rate rather than established.
 
+### Correcting it automatically
+
+The claw-back above is intermittent and silent: the machine simply starts
+throttling at the firmware's temperature until something re-applies the limits.
+Under a game that reads as the frame rate falling off and staying down. The
+optional watch unit fixes that:
+
+```bash
+sudo systemctl enable --now thinkpad-power-unlock-watch.service
+```
+
+It compares both values every `WATCH_INTERVAL` seconds (default 0.5) and rewrites
+only the one that drifted, so it costs two file reads per tick and touches nothing
+in the normal case. Measured recovery on a T480: a register poked to the firmware
+default was back **within 500 ms**.
+
+Every correction is logged, which matters more than it sounds:
+
+```
+$ journalctl -t thinkpad-power-unlock-watch
+REVERT: TCC offset was 30 (wanted 4), rewrote -> 4
+REVERT: MMIO PL1 was 15000000 (wanted 22000000), rewrote -> 22000000
+```
+
+> **The watchdog hides the evidence it is built on.** Without it a claw-back is a
+> durable state you can observe for the rest of the run; with it the revert
+> becomes a sub-second blip. `burnboth.sh` will therefore stop reporting
+> `LIMITS CHANGED` almost entirely while the watch is running, and the journal
+> above becomes the only record. Stop the watch for any run where catching the
+> revert is the point.
+
+The unit is written by `-powerunlock` but **not enabled** — the oneshot covers
+boot and resume, and a resident root process should be a choice. `-uninstall`
+removes it.
+
 ### Does it stick?
 
 Three ways the limits could be lost, and what each actually does on a T480
