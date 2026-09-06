@@ -585,7 +585,7 @@ if [ "$#" -gt 0 ]; then
                 cat > "$POWER_UNLOCK_CONF" << 'EOC'
 # Thinkpad power-unlock configuration.
 #
-# Nothing is applied while both settings stay commented out. Uncomment only
+# Nothing is applied while every setting stays commented out. Uncomment only
 # after reading "Raising the power limits" in the README: these let the CPU run
 # hotter and draw more sustained power than the firmware intends, and the right
 # values differ per chassis and per cooler.
@@ -600,6 +600,20 @@ if [ "$#" -gt 0 ]; then
 # PL1_UW: sustained package power, in microwatts. The hardware enforces
 # min(MSR, MMIO); this writes the MMIO copy. T480 firmware ships 15 W.
 #PL1_UW=22000000
+
+# EPP: the hardware governor's energy/performance hint, written to every CPU.
+# One of performance, balance_performance, balance_power, power -- your CPU's
+# list is in energy_performance_available_preferences. The two limits above are
+# ceilings; this decides how close the governor goes to them, and on battery it
+# is usually what actually binds. Measured on a T480 with both limits held
+# identical: balance_power 14.5 W / 2.39 GHz, performance 21.9 W / 2.93 GHz.
+#
+# Unlike the other two, this has an owner: power-profiles-daemon, TLP and tuned
+# rewrite EPP on profile changes and on AC plug/unplug, so a one-shot write holds
+# only until the next such event. The watch unit puts it back. If you would
+# rather not have two things writing one file, leave this commented out and use
+# 'powerprofilesctl set performance' instead.
+#EPP=performance
 
 # WATCH_INTERVAL: seconds between checks for thinkpad-power-unlock-watch, the
 # optional resident service that puts the limits back when the firmware takes
