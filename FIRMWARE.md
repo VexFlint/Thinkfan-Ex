@@ -703,15 +703,90 @@ The full progression, gain measured against each run's own baseline:
 | −80 | −18.1 % | 3093 MHz | +249 MHz (+8.8 %) |
 | −100 | −23.5 % | 3179 MHz | +295 MHz (+10.2 %) |
 | −120 | −27.3 % | 3242 MHz | **+358 MHz (+12.4 %)** |
+| −140 | not measured | not measured | **hard hang — see below** |
 
 Power saving per 20 mV step: 5.4 then 3.8 points — flattening. Clock gain per
-step: +46 then +63 MHz — **growing**. The stability limit on this part is
-somewhere past −120 mV and these probes have not found it.
+step: +46 then +63 MHz — **growing**. ~~The stability limit on this part is
+somewhere past −120 mV and these probes have not found it.~~ **Superseded at
+−140 mV**, which hung the machine — see [−140 mV: the hang](#140-mv-the-hang).
+The limit is past −120 and not past −140, on one sample.
 
 > **"No limit found" is not "stable at −120 mV".** Minutes of hashing and two
 > sweeps are hours short of validation, and the failure this hunt is looking for
 > — a wrong answer under a workload nobody tested — does not announce itself. The
 > limit being past −120 is a fact about the probes as much as about the part.
+
+### −140 mV: the hang
+
+The next step down took the machine. The −120 run was written up as run "to find
+the edge, on the understanding that a hang or a shutdown *is* the result" — this
+is that result arriving, not an accident.
+
+**Reported, not instrumented.** The step to −140 mV was taken outside the logged
+protocol and the machine hung before anything about it reached disk. What the
+system can still show:
+
+| | |
+|---|---|
+| last entry, boot −1 | `17:29:49.029171`, a routine `[UFW BLOCK]` kernel line |
+| shutdown record | **none** — `last` shows boot −1 as "still running" |
+| next boot | `18:10:36`, ~40 min later |
+| filesystem | btrfs `start tree-log replay` on mount — unclean unmount |
+| MCE / panic / oops | **none**, in either boot |
+| all five planes, after reboot | `0.00 mV` |
+| how it died | **frozen, display still lit** — operator-observed |
+
+The journal ends mid-stream on an unremarkable line. That dates the crash to **at
+or after 17:29:49**, not to 17:29:49 — journald's default `SyncIntervalSec=5m`
+means up to five minutes of entries were in memory and went with the hang, and
+the `0x150` write, its readback, and whatever workload was running were in that
+window. So the offset that hung it is **the offset reported, not an offset read
+back from the mailbox**, and the file should not pretend otherwise.
+
+**No machine check is itself a datum.** A hang with no MCE, no panic and no oops
+is a different signature from a corrected or uncorrected error being logged: the
+kernel did not survive to write anything. That is consistent with the core simply
+ceasing to execute correct instructions — the expected failure of too deep an
+undervolt — rather than with a thermal event or a detected data error.
+
+**It froze with the display still lit, which rules out the power-delivery paths.**
+Every mechanism that kills the machine from outside the core takes the backlight
+with it: a regulator over-current or under-voltage protection trip, an EC thermal
+cutoff, a platform reset. None of those happened — the panel stayed lit on the
+last frame, so **the rails held and nothing protective fired**. Whatever failed,
+failed while the platform was still being powered normally.
+
+That is evidence about power delivery, not about the CPU. Scanout is autonomous:
+the display engine walks the framebuffer over DMA on the iGPU plane, which was
+left at `0.00 mV` and never moved, so it keeps painting the last frame whether or
+not a core is still retiring instructions. A lit screen therefore does **not**
+separate "the cores stopped executing" from "the kernel panicked and hung without
+logging" — both leave exactly this picture. What it does say is that the failure
+was in computation, not in the supply that protection circuits watch, which is
+the shape a too-deep undervolt is supposed to have.
+
+**What this bounds, and what it does not.** One event, one sample, no
+replication: the honest statement is that the first hang in the sweep came at the
+first attempt past −120, so on this part the limit is **≤ −140 mV**. That is a
+bracket, not a characterised boundary. It does not locate the limit within the
+20 mV gap, does not say whether −130 runs, and — the point the −120 caveat
+already made — does not promote −120 to "stable", since the probes that cleared
+−120 were minutes of hashing against a failure mode that takes hours to show.
+
+Nothing persisted. Voltage offsets in `MSR 0x150` live in the mailbox until power
+is lost, so the reboot cleared them; all five planes read `0.00 mV` unprompted, no
+repo script writes the MSR (`fwmap.sh` only reads it), and no unit re-applies a
+voltage offset at boot — `thinkpad-power-unlock` runs and restores TCC 4 and
+MMIO PL1 22 W, as it does every boot, and touches no voltage plane. The
+filesystem replayed its log and reported no errors after. The cost of the
+experiment was one hard reboot.
+
+> **One fact about this crash is still missing:** whether the readback confirmed
+> −140 mV actually landed on the rail. Nothing in the logs can supply it, so the
+> offset above stays a reported figure. The other missing fact — how it died — was
+> supplied by the operator and is recorded above; it is the only thing separating
+> a protection trip from a computational failure, and the logs are identical
+> either way, which is to say empty.
 
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
@@ -782,7 +857,9 @@ uniformly risky, and the difference is worth keeping straight:
   from firmware every boot. Worst case is a hard power cycle.
 - **Reversible but destabilising** — OC mailbox voltage offsets. A bad undervolt
   hangs the machine or corrupts data silently under load. Test with the machine
-  idle and nothing important open.
+  idle and nothing important open. **Demonstrated:** −140 mV on core and cache
+  hung this machine hard, no log, unclean unmount — see
+  [−140 mV: the hang](#140-mv-the-hang).
 - **Not reliably reversible** — EC RAM writes (`ec_sys write_support=1`). Some
   ThinkPad EC offsets do not come back without a full power drain, battery
   disconnect included, and a few not at all. EFI variable writes can leave the
