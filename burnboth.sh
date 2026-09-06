@@ -223,7 +223,13 @@ def limits():
     trigger identified. Nothing reverts them at idle. Sampling every tick and
     printing the exact second is the only way to catch it, so do not throttle this
     down; a revert that goes unrecorded looks exactly like a run that never had
-    the limits applied, which is how three trials were wasted once already."""
+    the limits applied, which is how three trials were wasted once already.
+
+    If thinkpad-power-unlock-watch is running, this will almost never fire: the
+    watchdog puts the limits back within its poll interval, so a revert shows up
+    as a sub-second blip that the sampler is unlikely to land on. The journal
+    (-t thinkpad-power-unlock-watch) becomes the record instead. Stop the watch
+    for a run where catching the revert is the point."""
     try:
         tcc = open(TCC_PATH[0]).read().strip() if TCC_PATH else "?"
     except Exception:

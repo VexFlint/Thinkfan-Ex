@@ -7,6 +7,11 @@
 # suspended under load came back at the firmware defaults, and this unit put them
 # right 0.5s later. Idle resume needs nothing; loaded resume does.
 #
+# With --watch the script stays resident and puts the limits back the moment the
+# firmware takes them, which it does intermittently under load (see the README).
+# Every correction is logged, because a watchdog that fixes reverts silently also
+# destroys the only evidence anyone has about when they happen.
+#
 #   TCC offset   how far BELOW TjMax the CPU starts throttling. The firmware
 #                ships a large offset on some chassis (30 on a T480, i.e. throttle
 #                at 70C); lowering it lets the chip run closer to TjMax.
@@ -19,6 +24,9 @@
 # are chassis- and cooler-specific, and no default is safe to guess for someone
 # else's hardware. Install the unit, write the config, then it applies.
 set -u
+
+WATCH=0
+[ "${1:-}" = "--watch" ] && WATCH=1
 
 CONF=${POWER_UNLOCK_CONF:-/etc/thinkpad-power-unlock.conf}
 
@@ -88,6 +96,41 @@ if [ -n "$tj" ] && [ -n "$TCC_OFFSET" ]; then
 fi
 
 # Firmware can claw these back under sustained load, not just at boot. It is
-# intermittent: observed once in three identical runs, then absent across a full
-# 300s all-core + dGPU run. Re-run this unit to reapply; see the README.
+# intermittent: caught once in five valid runs at full load, at t=12s and t=104s
+# in separate runs, with no trigger identified. Re-run this unit to reapply, or
+# run it with --watch to have that done automatically; see the README.
+
+# Deliberately not apply(): that one writes unconditionally and prints a line
+# every time, which at 2 Hz would be a silent write per tick and a flooded
+# journal. Here we compare first and touch nothing unless it actually drifted.
+# Reads use bash redirection rather than cat so a poll costs no subprocess.
+watch_loop() {
+    local iv=${WATCH_INTERVAL:-0.5} cur now
+    case "$iv" in ''|*[!0-9.]*) iv=0.5 ;; esac
+    logger -t thinkpad-power-unlock-watch \
+        "watching every ${iv}s: TCC_OFFSET=${TCC_OFFSET:-unset} PL1_UW=${PL1_UW:-unset}"
+    while :; do
+        if [ -n "$TCC_OFFSET" ]; then
+            read -r cur < "$TCC" 2>/dev/null || cur=""
+            if [ -n "$cur" ] && [ "$cur" != "$TCC_OFFSET" ]; then
+                printf '%s\n' "$TCC_OFFSET" > "$TCC" 2>/dev/null
+                read -r now < "$TCC" 2>/dev/null || now="?"
+                logger -t thinkpad-power-unlock-watch \
+                    "REVERT: TCC offset was $cur (wanted $TCC_OFFSET), rewrote -> $now"
+            fi
+        fi
+        if [ -n "$PL1_UW" ]; then
+            read -r cur < "$PL1" 2>/dev/null || cur=""
+            if [ -n "$cur" ] && [ "$cur" != "$PL1_UW" ]; then
+                printf '%s\n' "$PL1_UW" > "$PL1" 2>/dev/null
+                read -r now < "$PL1" 2>/dev/null || now="?"
+                logger -t thinkpad-power-unlock-watch \
+                    "REVERT: MMIO PL1 was $cur (wanted $PL1_UW), rewrote -> $now"
+            fi
+        fi
+        sleep "$iv"
+    done
+}
+
+[ "$WATCH" = 1 ] && watch_loop      # never returns
 exit $rc
