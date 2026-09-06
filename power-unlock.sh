@@ -96,7 +96,7 @@ if [ -n "$tj" ] && [ -n "$TCC_OFFSET" ]; then
 fi
 
 # Firmware can claw these back under sustained load, not just at boot. It is
-# intermittent: caught once in five valid runs at full load, at t=12s and t=104s
+# intermittent: caught once in ten valid runs at full load, at t=12s and t=104s
 # in separate runs, with no trigger identified. Re-run this unit to reapply, or
 # run it with --watch to have that done automatically; see the README.
 
