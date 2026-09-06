@@ -636,6 +636,45 @@ turbo bursts with idle gaps, zero mismatches, no machine checks. Still not
 validation — see the caveat above, which applies with more force at this offset.
 Nothing was left applied; all five planes read 0.00 mV.
 
+### Core and cache share a rail — the planes are not independent
+
+The question asked was which plane gates the stability limit. The answer is that
+on this part the question does not have the shape it looks like it has.
+
+Three pinned-2.0 GHz sweeps at −100 mV, same protocol, differing only in which
+planes were moved:
+
+| moved | 0 mV | −100 mV | delta |
+|---|---|---|---|
+| core only | 9.02 W | 8.73 W | **−0.29 W** (−3.2 %) |
+| cache only | 9.18 W | 9.10 W | **−0.08 W** (−0.9 %, arms overlap) |
+| both | 9.10 W | 6.96 W | **−2.13 W** (−23.5 %) |
+
+The two singles sum to −0.37 W. Together they give −2.13 W — nearly six times
+their sum. Power is additive, so no model in which the planes have separate
+supplies can produce that.
+
+**They share one voltage rail, and the delivered voltage follows the higher of
+the two requests.** Undervolting one plane alone leaves the other's unchanged
+request holding the rail up, which is why each single is worth almost nothing and
+the pair is worth a quarter of core power. This is the documented shared-VCC
+arrangement on Intel client parts, and it is exactly why the standing advice is
+to move core and cache together — the measurement here is that advice with a
+number on it.
+
+**It also invalidates the split-plane test that produced it.** Core −110 with
+cache −80, and core −80 with cache −110, both ran clean through the probes. Read
+naively that says neither plane gates at −110. Read correctly, **neither
+configuration ever put −110 on the rail**: the delivered undervolt is the smaller
+of the two offsets, so both arms were −80 experiments wearing different labels.
+Asymmetric offsets cannot probe past the smaller one, so finding the stability
+limit means moving both planes together and stepping down.
+
+> Inferred from power behaviour, not measured at the regulator. The shared-rail
+> model is the only one consistent with the super-additivity above, and it agrees
+> with the known design of this generation, but nothing here reads the VR
+> directly.
+
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
 
