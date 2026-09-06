@@ -552,9 +552,54 @@ persists across a reboot anyway.
 
 > **Do not read −4.2 % as the payoff.** This was measured at 2.0 GHz, where the
 > part already runs near its voltage floor. The regime an undervolt is actually
-> for is the power-limited one, where the saved watts come back as clock — and
-> that is exactly the measurement the thermal drift above ruined. Quantifying it
-> needs the alternating protocol with a fixed thermal starting point per arm.
+> for is the power-limited one, where the saved watts come back as clock. See
+> the −80 mV result below, which measures exactly that.
+
+### −80 mV on core and cache — and the payoff, measured
+
+Both planes together, which is how these parts are normally moved. Readback
+`-80.08 mV` on plane 0 and plane 2.
+
+Same pinned-2.0 GHz protocol as above, six 40 s arms under one continuous load:
+
+| arm | `CorWatt` | `PkgWatt` | `PkgTmp` |
+|---|---|---|---|
+| 0 mV | 9.18 | 10.98 | 56 |
+| −80 mV | **7.48** | 9.37 | 53 |
+| 0 mV | 9.12 | 11.06 | 56 |
+| −80 mV | **7.52** | 9.33 | 53 |
+| 0 mV | 9.32 | 11.24 | 56 |
+| −80 mV | **7.63** | 9.71 | 53 |
+
+9.21 W mean against 7.54 W: **−18.1 % core power**, no overlap, and the package
+runs 3 C cooler at the same clock. Against −4.2 % for −50 mV on the core alone —
+most of that gap is the cache plane, which the earlier test did not move.
+
+Then the measurement that answers "what does this buy": identical protocol,
+frequency **unpinned**, so the machine sits in the PL1-limited regime where the
+governor spends whatever the undervolt saves.
+
+| arm | `Bzy_MHz` | `PkgWatt` | `PkgTmp` |
+|---|---|---|---|
+| 0 mV | 2833 | 21.80 | 82 |
+| −80 mV | **3103** | 21.99 | 82 |
+| 0 mV | 2886 | 21.78 | 83 |
+| −80 mV | **3104** | 21.81 | 83 |
+| 0 mV | 2812 | 21.88 | 82 |
+| −80 mV | **3073** | 22.03 | 83 |
+
+2844 MHz against 3093 MHz — **+249 MHz, +8.8 % all-core clock, at the same
+21.9 W and the same 82-83 C**. Power differs by 0.12 W between the groups and
+temperature by under a degree, so the clock is the whole of the difference. That
+is the payoff, and it is the number to quote.
+
+Stability at −80 mV: 776 SHA-256 passes across 8 workers with zero mismatches,
+three single-thread turbo bursts, no machine checks, offsets intact afterwards.
+
+> **That is "not obviously unstable", not "validated".** Real undervolt
+> validation is hours of mixed workloads — AVX, single-thread turbo, light load,
+> and idle transitions, which is where these fail first. Two minutes of hashing
+> rules out the crudest failure only. Nothing was left applied.
 
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
