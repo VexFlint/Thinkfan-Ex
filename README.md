@@ -762,7 +762,7 @@ Three ways the limits could be lost, and what each actually does on a T480
 |---|---|---|
 | **Reboot** | Holds | Unit runs at boot; `TCC 4 / PL1 22 W` live in sysfs afterwards |
 | **Sustained load** | Usually | Clean in nine of ten valid 300 s runs on AC; the other reverted at t=12 s. See the claw-back note above |
-| **Suspend / resume** | Depends on load | Idle: config moved aside so the unit no-ops, 75 s S3, both limits came back untouched. Under load: suspended mid-run, came back at firmware defaults — the unit restored them 0.5 s later |
+| **Suspend / resume** | Depends on power source | On AC, idle: 75 s S3 with the unit no-op'd, both limits came back untouched. On battery: reverted to firmware defaults on resume, both when loaded and when idle — see `FIRMWARE.md` |
 
 The load run is also the positive control that the limits are doing something:
 package power sits at **21.9 W sustained** against the 22 W PL1, and the throttle

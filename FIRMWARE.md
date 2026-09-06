@@ -176,6 +176,55 @@ sudo systemctl start thinkpad-power-unlock
 > nothing in userspace enables this zone during a normal session. It is a
 > mechanism that produces the same symptom, not a confirmed cause.
 
+## The claw-back caught in the wild
+
+The watchdog caught a spontaneous revert on an unattended resume. This is the
+first capture with both registers logged at the moment it happened:
+
+```
+01:07:03.047  PM: suspend entry (deep)
+01:14:04.735  REVERT: TCC offset was 30 (wanted 4), rewrote -> 4
+01:14:04.774  REVERT: MMIO PL1 was 15000000 (wanted 22000000), rewrote -> 22000000
+01:14:04.977  PM: suspend exit
+01:14:05.267  thinkpad-power-unlock: ok TCC offset = 4
+```
+
+`TCC 30` **and** `PL1 15000000` together — the firmware's true defaults, and the
+exact signature seen during load runs.
+
+**This rules the DPTF path out as the cause.** Forcing DPTF lands TCC at **3**;
+this lands it at **30**. Different values, different paths. DPTF demonstrably
+writes these registers, but it is not what reverts them in normal use. The wild
+claw-back is firmware re-initialisation, and resume is one confirmed trigger.
+
+**The discriminator looks like AC vs battery, not idle vs load.** Three suspends
+so far:
+
+| suspend | power | load | reverted |
+|---|---|---|---|
+| controlled test | AC | idle | no |
+| drain batch | battery | loaded | yes |
+| unattended | battery | idle | **yes** |
+
+That reads as "on battery it reverts", not "under load it reverts", which is what
+this file and the README previously said. Untested as a controlled pair; the
+experiment is one suspend on AC and one on battery with the watchdog stopped.
+
+## The battery clamp sets no limit-reason bit
+
+On battery the package pins at ~13.8 W while `CORE_PERF_LIMIT_REASONS` reports
+**no reason at all** for most of the run:
+
+| | `nothing` | `PL1` | `thermal` |
+|---|---|---|---|
+| battery, 13.8 W sustained | **71** | 29 | 0 |
+| AC, 21.7 W sustained | 0 | 83 | 18 |
+
+So the DC budget is not a RAPL limit, not a thermal trip, and not PROCHOT — it is
+enforced by a path invisible to Intel's own limit reporting. Setting
+`AdaptiveThermalManagementBattery` to `MaximizePerformance` did **not** change it
+(13.8 W before and after), but that setting is expected to need a reboot.
+
 ## DYTC — Lenovo Intelligent Cooling
 
 The most interesting thing found so far, and the leading claw-back suspect.
