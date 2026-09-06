@@ -627,9 +627,13 @@ The whole set so far, on one machine, one protocol:
 | −80 | core + cache | −18.1 % | 3093 MHz (+8.8 %) |
 | −100 | core + cache | −23.5 % | 3179 MHz (+10.2 %) |
 
-**The returns are flattening.** A quarter more offset from −80 to −100 bought
-about a fifth as much clock as the step before it. Whatever the stability limit
-turns out to be, the useful range on this part looks like it ends well before it.
+~~**The returns are flattening.**~~ **Corrected at −120 mV — they are not, in the
+metric that matters.** That claim came from watching the fixed-clock power saving
+grow by less each step. The fixed-power *clock* gain did the opposite; see the
+−120 mV row below. Both are true at once: at a fixed clock the saving flattens as
+the part approaches its voltage floor, while at a fixed power budget the clock
+gain grows, because the power-frequency curve steepens as voltage comes down. The
+second is the one an undervolt is for.
 
 Stability at −100 mV: 781 SHA-256 passes across 8 workers, ten single-thread
 turbo bursts with idle gaps, zero mismatches, no machine checks. Still not
@@ -674,6 +678,40 @@ limit means moving both planes together and stepping down.
 > model is the only one consistent with the super-additivity above, and it agrees
 > with the known design of this generation, but nothing here reads the VR
 > directly.
+
+### −120 mV: no limit found
+
+Run to find the edge, on the understanding that a hang or a shutdown *is* the
+result. Neither happened. Both planes at `-120.12 mV`:
+
+| | 0 mV | −120 mV |
+|---|---|---|
+| pinned 2.0 GHz, `CorWatt` | 9.19 / 9.20 / 9.01 | **6.66 / 6.64 / 6.62** (−27.3 %) |
+| pinned 2.0 GHz, `PkgTmp` | 57-58 | **52-53** |
+| unpinned, `Bzy_MHz` | 2887 / 2883 / 2882 | **3244 / 3241 / 3241** |
+| unpinned, `PkgWatt` | 21.97 | 21.90 |
+
+**+358 MHz, +12.4 %, at the same 21.9 W.** Survived ten single-thread turbo
+bursts with idle gaps, 4625 SHA-256 passes across 8 workers with zero mismatches,
+twelve voltage transitions across two sweeps, and roughly eight minutes under
+load at the offset. No machine checks, no hang, no shutdown.
+
+The full progression, gain measured against each run's own baseline:
+
+| offset | fixed-clock core power | fixed-power clock | gain |
+|---|---|---|---|
+| −80 | −18.1 % | 3093 MHz | +249 MHz (+8.8 %) |
+| −100 | −23.5 % | 3179 MHz | +295 MHz (+10.2 %) |
+| −120 | −27.3 % | 3242 MHz | **+358 MHz (+12.4 %)** |
+
+Power saving per 20 mV step: 5.4 then 3.8 points — flattening. Clock gain per
+step: +46 then +63 MHz — **growing**. The stability limit on this part is
+somewhere past −120 mV and these probes have not found it.
+
+> **"No limit found" is not "stable at −120 mV".** Minutes of hashing and two
+> sweeps are hours short of validation, and the failure this hunt is looking for
+> — a wrong answer under a workload nobody tested — does not announce itself. The
+> limit being past −120 is a fact about the probes as much as about the part.
 
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
