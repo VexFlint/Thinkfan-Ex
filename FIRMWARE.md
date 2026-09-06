@@ -130,38 +130,50 @@ states DYTC switches between. `PSC_*` correspond to power-slider positions.
 
 ## DPTF writes these registers — demonstrated
 
-The DPTF path can be driven on demand, and doing so reproduces the claw-back's
-signature. The `INT3400` thermal zone starts `disabled`; enabling it makes the
-kernel run `_OSC`, which firmware answers by calling `DYTC(0x000F0001)`.
+The DPTF path can be driven on demand, and it reproduces the claw-back's PL1
+value exactly. The `INT3400` thermal zone starts `disabled`; enabling it makes
+the kernel run `_OSC`, which firmware answers by calling `DYTC(0x000F0001)`.
+Disabling it runs `DYTC(0x01FF)`.
+
+**A single enable moves only the TCC offset.** Within 2 ms of the first enable,
+TCC goes 4 to 3. PL1 is untouched — verified over 45 s idle and over a full 300 s
+`burnboth` run, which held 22 W, 21.7 W sustained, 97 C peak, no `LIMITS CHANGED`.
+
+**A second enable cycle clamps PL1 to 15 W.** Disable an already-enabled zone and
+re-enable it, and about 2 s later MMIO PL1 becomes `15000000` — and stays. Three
+independent runs, identical each time:
 
 ```
-trial 1: TCC 4 -> 3 after 2ms      PL1 22000000 -> 22000000
-trial 2: TCC already 3             PL1 15000000
-trial 3: TCC already 3             PL1 15000000
-zone left ENABLED:  TCC=3  PL1=15000000
+trial 1   baseline TCC=4 PL1=22000000   after enable: TCC=3 PL1=22000000
+trial 2   [+2242ms] TCC/PL1 = 3/15000000
+          baseline TCC=3 PL1=15000000   after enable: TCC=3 PL1=15000000
+trial 3   baseline TCC=3 PL1=15000000   after enable: TCC=3 PL1=15000000
 ```
 
-Two things are established by this:
+The `power-unlock` oneshot ran at the top of trial 2 and **succeeded** — exit 0,
+`ok MMIO PL1 (uW) = 22000000` — and the firmware overrode it roughly two seconds
+later. So this is not a failed write; it is the firmware winning a write it did
+not make first.
 
-1. **Firmware writes the TCC offset register**, within 2 ms of the handshake.
-2. **Firmware forces MMIO PL1 to exactly 15000000** and holds it there *against*
-   `power-unlock` writing 22 W. That is the claw-back's PL1 value precisely.
+Disabling the zone and re-applying restores 22 W. Nothing survives a reboot.
 
-Disabling the zone releases the clamp and the raised limits hold again. Nothing
-here persists past a reboot.
-
-Reproduce it with (note it **overrides your power limits while enabled**):
+Reproduce it (this **overrides your power limits while enabled**):
 
 ```bash
-sudo systemctl stop thinkpad-power-unlock-watch    # or it fights the firmware
-echo enabled  > /sys/class/thermal/thermal_zone1/mode
-echo disabled > /sys/class/thermal/thermal_zone1/mode
+sudo systemctl stop thinkpad-power-unlock-watch     # or it fights the firmware
+Z=/sys/class/thermal/thermal_zone1
+echo enabled  > $Z/mode      # first cycle: TCC 4 -> 3 only
+echo disabled > $Z/mode
+echo enabled  > $Z/mode      # second cycle: PL1 -> 15000000
+echo disabled > $Z/mode      # release
+sudo systemctl start thinkpad-power-unlock
 ```
 
-> **This is not proof that the wild claw-back is this path.** The forced case
-> lands TCC at 3; the observed claw-back lands it at 30. The PL1 half matches
-> exactly and the mechanism demonstrably writes both registers, but the TCC half
-> does not match, so this is a strong candidate and not a closed case.
+> **Still not proof that the wild claw-back is this path.** The PL1 value matches
+> exactly and the mechanism demonstrably overrides a successful write, but the
+> forced case lands TCC at 3 where the observed claw-back lands it at 30, and
+> nothing in userspace enables this zone during a normal session. It is a
+> mechanism that produces the same symptom, not a confirmed cause.
 
 ## DYTC — Lenovo Intelligent Cooling
 
@@ -242,6 +254,9 @@ observe, reboot to confirm it resets, and only then automate it.
 5. **Why does forced DPTF land TCC at 3 when the wild claw-back lands it at 30?**
    Same register, same subsystem, different value. Until that is explained the
    DPTF path is a strong candidate rather than the identified cause.
+5b. **Why does the PL1 clamp need a second enable cycle?** The first `_OSC` only
+   moves TCC. Reproducible, unexplained — likely the `DYTC(0x01FF)` withdrawal
+   leaving state that the next entry applies differently.
 6. **What enables DPTF in the wild?** The zone is `disabled` at boot and nothing
    in userspace turns it on here. If firmware can enable it autonomously under
    load, that closes the loop.
