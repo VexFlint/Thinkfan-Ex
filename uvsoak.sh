@@ -177,7 +177,24 @@ def check_avx():
         c = (c / np.linalg.norm(c)) @ b
     return hashlib.sha256(np.ascontiguousarray(c).tobytes()).hexdigest()
 
-CHECKS = [("sha", check_sha), ("int", check_int), ("avx", check_avx)]
+MEM_SEED, MEM_MB = 4242, 64
+_membuf = None
+
+def check_mem():
+    # A private 64 MB buffer per worker, regenerated after the fork so each one
+    # holds its own physical pages, hashed whole every round. This is the only
+    # check that streams data out across the ring and into DRAM -- the path a
+    # blocky display artifact implicates and the three register-resident checks
+    # above would never see. A flipped bit here is persistent: once the buffer
+    # is wrong it stays wrong, and every later round reports it.
+    global _membuf
+    if _membuf is None:
+        rng = np.random.default_rng(MEM_SEED)
+        _membuf = bytearray(rng.integers(0, 256, size=MEM_MB << 20, dtype=np.uint8).tobytes())
+    return hashlib.sha256(memoryview(_membuf)).hexdigest()
+
+CHECKS = [("sha", check_sha), ("int", check_int), ("avx", check_avx), ("mem", check_mem)]
+NSLOT = len(CHECKS) + 1          # per-worker: one counter per check, plus mismatches
 
 # ------------------------------------------------------------------- the workers
 # Each worker owns four slots in a shared array -- three pass counters and a
@@ -188,6 +205,8 @@ def worker(idx, counters, refs, stop, duty_on, duty_off, pin):
         os.environ[v] = "1"
     if pin is not None:
         os.sched_setaffinity(0, {pin})
+    global _membuf
+    _membuf = None               # rebuild after the fork, do not share the parent's
     fault = open(LOGPATH + ".mismatch", "a", buffering=1)
     while not stop.is_set():
         t0 = time.monotonic()
@@ -195,9 +214,9 @@ def worker(idx, counters, refs, stop, duty_on, duty_off, pin):
             for k, (name, fn) in enumerate(CHECKS):
                 got = fn()
                 if got == refs[name]:
-                    counters[idx * 4 + k] += 1
+                    counters[idx * NSLOT + k] += 1
                 else:
-                    counters[idx * 4 + 3] += 1
+                    counters[idx * NSLOT + len(CHECKS)] += 1
                     fault.write(
                         f"{time.time():.3f} worker{idx} {name} "
                         f"expected={refs[name]} got={got}\n"
@@ -289,9 +308,9 @@ if MV != 0 and (abs(core_mv - MV) > 1.5 or abs(cache_mv - MV) > 1.5):
     sys.exit(1)
 
 say(f, "ts elapsed phase core_mv cache_mv Bzy_MHz PkgW CorW PkgTmp mmioW batt "
-       "sha int avx mismatch")
+       "sha int avx mem mismatch")
 
-counters = mp.Array("l", NCPU * 4, lock=False)
+counters = mp.Array("l", NCPU * NSLOT, lock=False)
 stop = mp.Event()
 verdict, procs = "completed", []
 start = time.monotonic()
@@ -299,7 +318,7 @@ last_e, last_t = energy(), time.monotonic()
 last_am = aperf_mperf()
 
 def totals():
-    return [sum(counters[i * 4 + k] for i in range(NCPU)) for k in range(4)]
+    return [sum(counters[i * NSLOT + k] for i in range(NCPU)) for k in range(NSLOT)]
 
 try:
     ci = 0
@@ -332,11 +351,11 @@ try:
             cmv, kmv = plane_read(0), plane_read(2)
             tmp = pkg_temp()
             s = read_state()
-            sha_n, int_n, avx_n, bad = totals()
+            sha_n, int_n, avx_n, mem_n, bad = totals()
             say(f, f"{time.time():.0f} {now - start:7.1f} {name:11s} "
                    f"{cmv:+7.2f} {kmv:+7.2f} {mhz:7.1f} {pkg_w:5.2f} {cor_w:5.2f} "
                    f"{tmp:3d} {int(s['mmio_uw']) // 1000000 if s['mmio_uw'].isdigit() else 0:3d} "
-                   f"{s['batt']:>3s} {sha_n:6d} {int_n:6d} {avx_n:6d} {bad:d}")
+                   f"{s['batt']:>3s} {sha_n:6d} {int_n:6d} {avx_n:6d} {mem_n:6d} {bad:d}")
             if bad:
                 verdict = "MISMATCH"; break
             if tmp >= 99:
@@ -368,7 +387,7 @@ finally:
         plane_write(p, 0)
 
 elapsed = time.monotonic() - start
-sha_n, int_n, avx_n, bad = totals()
+sha_n, int_n, avx_n, mem_n, bad = totals()
 say(f, f"# offset cleared, core {plane_read(0):+.2f} mV cache {plane_read(2):+.2f} mV")
 
 # The closing baseline. If the references do not reproduce at 0 mV after the
@@ -380,8 +399,8 @@ post_mce = [h for h in mce_nonzero() if h not in pre_mce]
 say(f, f"# machine-check banks after: {post_mce if post_mce else 'all clear (no new)'}")
 say(f, f"# verdict        {verdict}")
 say(f, f"# ran            {elapsed:.0f} s at {MV:+.0f} mV")
-say(f, f"# passes         sha={sha_n} int={int_n} avx={avx_n} mismatches={bad}")
+say(f, f"# passes         sha={sha_n} int={int_n} avx={avx_n} mem={mem_n} mismatches={bad}")
 f.close()
-print(f"verdict {verdict}: {elapsed:.0f}s, sha={sha_n} int={int_n} avx={avx_n} mismatches={bad}")
+print(f"verdict {verdict}: {elapsed:.0f}s, sha={sha_n} int={int_n} avx={avx_n} mem={mem_n} mismatches={bad}")
 sys.exit(0 if verdict in ("completed", "battery-floor", "interrupted") and not bad and post_ok else 2)
 PY
