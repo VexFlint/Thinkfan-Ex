@@ -45,8 +45,9 @@ why `fwmap.sh` stamps them at the top of every report.
 | EC RAM | Fan, battery, thermal, charge | `ec_sys` debugfs | read-only as loaded | **Very high** on write |
 | `thinkpad_acpi` | Fan, LEDs, hotkeys, thermal | `/proc/acpi/ibm/*` | no | Low to medium |
 | ACPI `_Qxx` (48 handlers) | EC event hooks | AML only | n/a | Read-only here |
-| ACPI-WMI (18 devices) | Lenovo config interfaces | `/sys/bus/wmi` | n/a | Unmapped |
-| EFI variables (158, 21 Lenovo) | BIOS setup, hidden settings | `efivarfs` | some RO | **Very high** on write |
+| ACPI-WMI (18 devices) | Lenovo config interfaces | `/sys/bus/wmi` | n/a | Read-only here |
+| **think-lmi** | 79 BIOS setup settings | `firmware-attributes` | `LockBIOSSetting=Disable` | Read safe, **write = BIOS change** |
+| EFI variables (158, 21 Lenovo) | BIOS setup backing store | `efivarfs` | some RO | **Very high** on write |
 | SPI flash | BIOS/EC image | needs `flashrom` | n/a | **Bricking** |
 
 ## Power and thermal — the part already in use
@@ -198,6 +199,58 @@ userspace daemon, both limits moving together to platform defaults.
 on this machine, so DYTC is not currently reachable from userspace — no
 `/sys/firmware/acpi/platform_profile` exists. Whether the firmware invokes it
 on its own during load is exactly the open question.
+
+## BIOS settings via think-lmi
+
+The `think-lmi` driver binds WMI GUID `51F5230E-9677-46CD-A1CF-C0B23EE34DB7` and
+exposes **79 BIOS setup settings** as a supported kernel interface — far better
+than poking the EFI variables that back them.
+
+```bash
+sudo cat /sys/class/firmware-attributes/thinklmi/attributes/<name>/current_value
+sudo cat /sys/class/firmware-attributes/thinklmi/attributes/<name>/possible_values
+```
+
+The four that bear on this repo:
+
+| setting | value | options |
+|---|---|---|
+| `AdaptiveThermalManagementAC` | `MaximizePerformance` | `MaximizePerformance;Balanced` |
+| `AdaptiveThermalManagementBattery` | **`Balanced`** | `MaximizePerformance;Balanced` |
+| `CPUPowerManagement` | `Automatic` | `Disable;Automatic` |
+| `SpeedStep` | `Enable` | `Disable;Enable` |
+
+`AdaptiveThermalManagementBattery = Balanced` is the likely BIOS-level selector
+behind the `_DC` rows in the DPTF policy table, and therefore behind the 12-15 W
+battery ceiling that no sysfs register accounted for. Setting it to
+`MaximizePerformance` is the obvious experiment. It is a **BIOS setting write**,
+backed by an EFI variable, so it is not in the reversible-at-reboot tier — it
+persists, and it is gated behind explicit permission here.
+
+`LockBIOSSetting = Disable`, so settings are not locked. Writes through this
+interface normally require the BIOS supervisor password via the driver's
+authentication node when one is set.
+
+## The OC (undervolt) mailbox
+
+`MSR 0x150` is the voltage-offset mailbox — the interface `intel-undervolt`
+drives. Reading an offset requires writing a *query* word to the mailbox
+(`0x80000010 | plane << 40`) and reading the result back; the query sets nothing.
+
+All five planes currently read **0.00 mV** — no undervolt applied:
+
+| plane | domain | offset |
+|---|---|---|
+| 0 | CPU core | +0.00 mV |
+| 1 | iGPU | +0.00 mV |
+| 2 | CPU cache | +0.00 mV |
+| 3 | System agent | +0.00 mV |
+| 4 | Analog I/O | +0.00 mV |
+
+> Reading zeros does **not** prove the write path works. Microcode `0xf6` carries
+> the Plundervolt mitigation (CVE-2019-11157), which locks the undervolt
+> interface on many Kaby Lake-R systems. Whether offsets can actually be applied
+> here is untested.
 
 ## Embedded controller
 
