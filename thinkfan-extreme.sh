@@ -174,6 +174,7 @@ log_event() {
 CONFIG_FILE="/etc/thinkfan-extreme.conf"
 POWER_UNLOCK_SCRIPT="/usr/local/sbin/thinkpad-power-unlock"
 POWER_UNLOCK_UNIT="/etc/systemd/system/thinkpad-power-unlock.service"
+POWER_UNLOCK_WATCH_UNIT="/etc/systemd/system/thinkpad-power-unlock-watch.service"
 POWER_UNLOCK_CONF="/etc/thinkpad-power-unlock.conf"
 
 DEFAULT_CONFIG_CONTENT=$(cat <<'EOC'
@@ -599,6 +600,12 @@ if [ "$#" -gt 0 ]; then
 # PL1_UW: sustained package power, in microwatts. The hardware enforces
 # min(MSR, MMIO); this writes the MMIO copy. T480 firmware ships 15 W.
 #PL1_UW=22000000
+
+# WATCH_INTERVAL: seconds between checks for thinkpad-power-unlock-watch, the
+# optional resident service that puts the limits back when the firmware takes
+# them. Default 0.5. Lower reacts faster to a mid-game revert; the cost is one
+# more sleep per second, which is nothing. Ignored unless the watch unit runs.
+#WATCH_INTERVAL=0.5
 EOC
                 echo "Created $POWER_UNLOCK_CONF."
                 echo "Nothing is applied until you uncomment a setting in it."
@@ -615,9 +622,30 @@ ExecStart=$POWER_UNLOCK_SCRIPT
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
 EOU
+            # Separate unit, and deliberately not enabled here: the oneshot is
+            # enough for most people, and not everyone wants a resident root
+            # process. Restart=on-failure rather than always, because a clean
+            # exit means the config asks for nothing and restarting would spin.
+            cat > "$POWER_UNLOCK_WATCH_UNIT" << EOW
+[Unit]
+Description=Keep ThinkPad CPU power/thermal limits applied
+After=thinkpad-power-unlock.service
+
+[Service]
+Type=simple
+ExecStart=$POWER_UNLOCK_SCRIPT --watch
+Restart=on-failure
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target
+EOW
             systemctl daemon-reload
             systemctl enable thinkpad-power-unlock.service >/dev/null 2>&1 || true
             echo "Enabled thinkpad-power-unlock.service (applies at boot and on resume)."
+            echo "The firmware can take these limits back mid-session. To have that"
+            echo "corrected automatically, and logged:"
+            echo "  systemctl enable --now thinkpad-power-unlock-watch.service"
             rc=0
             "$POWER_UNLOCK_SCRIPT" || rc=$?
             exit $rc
@@ -636,6 +664,9 @@ EOU
             rm -f /usr/local/bin/thinkfan-ex
             # Power unlock, if -powerunlock was ever run. The config is left
             # behind like every other config here, for the user to remove.
+            systemctl stop thinkpad-power-unlock-watch.service 2>/dev/null || true
+            systemctl disable thinkpad-power-unlock-watch.service 2>/dev/null || true
+            rm -f /etc/systemd/system/thinkpad-power-unlock-watch.service
             systemctl stop thinkpad-power-unlock.service 2>/dev/null || true
             systemctl disable thinkpad-power-unlock.service 2>/dev/null || true
             rm -f /etc/systemd/system/thinkpad-power-unlock.service
