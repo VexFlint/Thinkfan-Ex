@@ -638,6 +638,8 @@ second is the one an undervolt is for.
 Stability at −100 mV: 781 SHA-256 passes across 8 workers, ten single-thread
 turbo bursts with idle gaps, zero mismatches, no machine checks. Still not
 validation — see the caveat above, which applies with more force at this offset.
+**Since superseded by two hours and 142 332 checked answers**; see
+[−100 mV, held for two hours](#100-mv-held-for-two-hours-and-checked-the-whole-way).
 Nothing was left applied; all five planes read 0.00 mV.
 
 ### Core and cache share a rail — the planes are not independent
@@ -787,6 +789,116 @@ experiment was one hard reboot.
 > supplied by the operator and is recorded above; it is the only thing separating
 > a protection trip from a computational failure, and the logs are identical
 > either way, which is to say empty.
+
+### The display artifact at −120 mV, which nothing corroborates
+
+The plan after −140 was a long, logged run at −120 to turn "no limit found" into
+something that could be attested. It ran 401 seconds and was stopped early,
+because **the operator saw blocky artifacts on screen**.
+
+Nothing else in the machine saw anything:
+
+| witness | reading |
+|---|---|
+| the run's own checks | 8286 answers verified, **zero mismatches** |
+| `i915` / `drm` | no error, no FIFO or pipe underrun, no GPU hang, no reset |
+| btrfs | `corruption_errs 0` |
+| machine-check banks | no new bank set |
+| compositor / journal | nothing |
+| offset readback | `-120.12 mV` on both planes for every sample |
+| 0 mV baseline afterwards | reproduces |
+
+**When it happened is the most informative thing about it.** The artifact fell
+inside the `turbo-burst` phase — one core at 4.19 GHz with a 5 s on/off duty
+cycle and the other seven in deep C-states. That cuts against the boring
+explanation: turbo-burst is the phase where the machine is *least* loaded, so
+"the compositor was starved by an eight-thread soak" is least available exactly
+where the artifact appeared. It is also the top of the voltage-frequency curve
+with a voltage transition every five seconds, which is the regime this file has
+been saying undervolts fail in first.
+
+Three candidates survive, and honesty requires listing the instrument among
+them:
+
+1. **The cache plane is the ring and the LLC.** Framebuffer traffic crosses it.
+   A chunk-sized wrong answer in transit is what blocky artifacts look like, and
+   the three checks running at the time — SHA, modexp, matmul — all verify
+   values that live in registers and L1. None of them watched a path that
+   reaches DRAM. *(A fourth check that does was added afterwards; see below.)*
+2. **The harness's own `MSR 0x150` poll.** It reads the offset back every five
+   seconds, which means writing the mailbox command word — on the same core
+   running the turbo burst. The earlier −120 runs read the mailbox only at start
+   and end. This is new behaviour introduced by the instrument.
+3. **Coincidence.** A driver or compositor artifact with no relation to voltage.
+
+One thing it is *not*: the iGPU browning out. The iGPU is on its own rail. If it
+shared with core and cache, an active compositor would hold the rail up and the
+−27 % core power saving measured at −120 would have vanished — and it did not.
+
+> **This does not demote −120 mV, and it does not confirm it either.** One
+> unreplicated visual event, no logged corroboration, three live explanations and
+> no test yet run that separates them. What it does is remove −120 from the list
+> of things this file can currently attest.
+
+### −100 mV, held for two hours and checked the whole way
+
+Backed off one step and ran the soak that −120 did not finish. Two hours,
+dedicated machine, on AC, at `-99.61 mV` on core and cache.
+
+| | |
+|---|---|
+| ran | **7202 s**, verdict `completed` |
+| answers verified | **142 332** — sha 35 630, int 35 612, avx 35 567, mem 35 523 |
+| mismatches | **0** |
+| new machine-check banks | none |
+| 0 mV baseline recomputed after | **reproduces** |
+| offset readback | `-99.61 mV` on both planes, all 1437 samples, no drift |
+| MMIO PL1 | 22 W on all 1437 samples |
+
+Four workload classes, not one, cycling through four phases about thirteen times:
+
+| phase | samples | mean MHz | peak MHz | mean PkgW | peak C |
+|---|---|---|---|---|---|
+| all-core | 657 | 3050 | 3397 | 21.97 | 92 |
+| mixed | 312 | 3640 | 3852 | 23.86 | 98 |
+| turbo-burst | 312 | 4158 | 4194 | 9.32 | 97 |
+| idle | 156 | 4113 | 4144 | 2.12 | 44 |
+
+224 samples at or above 90 C and 52 at or above the 96 C TCC clamp, so this was
+not a cool run — the part spent real time against its thermal limit while
+undervolted. (`Bzy_MHz` is busy-frequency, which is why the idle row reads high:
+the only thing running in that phase is the sampler itself, at turbo.)
+
+**What this attests, precisely.** Two hours at −100 mV, on this machine, at
+PL1 22 W / TCC 4 / EPP performance, across all-core, partial, single-thread
+turbo and deep-idle phases, produced no wrong answer in four unit classes —
+SHA-NI, the integer multiplier, AVX2 FP through BLAS, and a 64 MB DRAM buffer
+per worker hashed whole every round. Every reference reproduces at 0 mV
+afterwards, so the checks were checking something.
+
+> **What it does not attest.** Two hours of a synthetic mix is not a year of
+> real work: it narrows "a wrong answer under a workload nobody ran" without
+> closing it. Nothing here exercises the GPU, the display path, storage or the
+> network, and the −120 artifact above is a standing reminder that a symptom can
+> appear in a subsystem the checks do not watch. This is the strongest statement
+> this file can make about an undervolt on this part, and it is still a statement
+> about two hours.
+
+The harness is `uvsoak.sh`, committed alongside `fwmap.sh` and `burnboth.sh`:
+
+```
+sudo ./uvsoak.sh                    # 2h at -120 mV, AC
+sudo ./uvsoak.sh 7200 -100          # what produced the table above
+sudo ./uvsoak.sh 2700 -100 battery  # battery leg, stops at 30% capacity
+sudo ./uvsoak.sh 600 0              # control run, no offset
+```
+
+It computes its reference answers at 0 mV before applying the offset, recomputes
+them at 0 mV after clearing it, and writes them into the log header as constants
+any machine can reproduce — a reference the device under test produced and kept
+only in RAM proves nothing if the device was already wrong. Every line is
+fsynced, which is the −140 lesson: if the machine goes down, the last line on
+disk is the last thing that was true, including the phase it died in.
 
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
