@@ -37,7 +37,7 @@ why `fwmap.sh` stamps them at the top of every report.
 | RAPL MMIO PL1 | Sustained power, the copy that wins | `powercap` sysfs | No | Low |
 | `tcc_offset_degree_celsius` | Throttle point below TjMax | sysfs | No | Medium — thermal |
 | `MSR 0x1AD` TURBO_RATIO_LIMIT | Per-core-count turbo multipliers | `/dev/cpu/*/msr` | No | Medium |
-| `MSR 0x150` OC mailbox | Core/cache voltage offsets | `/dev/cpu/*/msr` | No | **High** — instability, silent corruption |
+| `MSR 0x150` OC mailbox | Core/cache voltage offsets | `/dev/cpu/*/msr` | No — write path tested open | **High** — instability, silent corruption |
 | `MSR 0x1FC` POWER_CTL | C1E, energy-efficient turbo | `/dev/cpu/*/msr` | No | Low |
 | DPTF `INT3400` | Thermal policy, `odvp*` state | platform sysfs | policy `INVALID` | Low to read |
 | DPTF `data_vault` | OEM thermal policy blob (2263 B) | sysfs, read-only | n/a | Read-only |
@@ -481,10 +481,47 @@ All five planes currently read **0.00 mV** — no undervolt applied:
 | 3 | System agent | +0.00 mV |
 | 4 | Analog I/O | +0.00 mV |
 
-> Reading zeros does **not** prove the write path works. Microcode `0xf6` carries
-> the Plundervolt mitigation (CVE-2019-11157), which locks the undervolt
-> interface on many Kaby Lake-R systems. Whether offsets can actually be applied
-> here is untested.
+### The write path is open (tested 2026-09-06)
+
+It is **not** locked. Microcode `0xf6` carries the Plundervolt mitigation
+(CVE-2019-11157), which closes this interface on many Kaby Lake-R systems, and it
+does not close it here.
+
+Tested with the smallest offset worth writing, on the core plane only:
+
+```
+plane 0 (CPU core): +0.00 -> wrote -15.0 -> reads -14.65 mV
+```
+
+−14.65 is −15 quantised: the mailbox stores in 1/1.024 mV steps, so −15 mV
+encodes as −15 units and reads back as −15 / 1.024. That round trip is the
+result — the register accepted a write and returned it.
+
+30 s of 8-thread load at that offset ran clean: 2376 MHz, 14.16 W, 58 C, no
+machine checks, `CoreThr` 0. **The offset was set back to 0 immediately
+afterwards**; nothing on this machine is undervolted.
+
+> **What this does not prove.** The readback shows the mailbox stored the value,
+> not that the voltage regulator applied it. −15 mV is around 1 % of core
+> voltage — far inside run-to-run noise, so no power or frequency measurement
+> here can confirm it landed. Demonstrating the *effect* needs a larger offset
+> and a fixed-frequency comparison (in the PL1-limited regime it shows up as more
+> MHz at the same watts, not as fewer watts). That is a separate experiment, and
+> a real undervolt is the one place in this file where a wrong value corrupts
+> data silently rather than announcing itself.
+
+The protocol, so it does not have to be re-derived — write the command word to
+`MSR 0x150`, then read the same MSR back:
+
+| | command word |
+|---|---|
+| read plane *p* | `0x8000001000000000 \| (p << 40)` |
+| write plane *p* | `0x8000001100000000 \| (p << 40) \| packed` |
+
+`packed = ((int)round(mv * 1.024) << 21) & 0xffffffff`, and unpacking is the
+inverse: sign-extend the low 32 bits, arithmetic-shift right 21, divide by 1.024.
+Planes are core, iGPU, cache, system agent, analog I/O, in that order. On this
+part the core and cache planes are commonly moved together.
 
 ## Embedded controller
 
