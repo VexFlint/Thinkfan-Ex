@@ -900,6 +900,62 @@ only in RAM proves nothing if the device was already wrong. Every line is
 fsynced, which is the −140 lesson: if the machine goes down, the last line on
 disk is the last thing that was true, including the phase it died in.
 
+### −100 mV on battery: the offset changes what it buys
+
+Unplugged, EPP drops to `balance_power` on its own — the clamp this file already
+traced to EPP rather than firmware, visible live in the log header. That changes
+the experiment, so the battery leg is a separate arm: 45 minutes at `-99.61 mV`,
+then a 10-minute control at 0 mV through the same phases for comparison.
+
+The leg itself was clean: **2702 s, 37 328 answers verified** (sha 9353, int
+9345, avx 9324, mem 9306), zero mismatches, no new machine-check banks, the 0 mV
+references reproducing afterwards, and no offset or PL1 drift across 538
+samples. Battery went 100 % to 85 %.
+
+**On battery the clock is pinned, so the offset spends itself on power instead.**
+On AC the part is power-limited and a lower voltage buys frequency. Here EPP has
+already clamped the clock and it does not move:
+
+| phase | | 0 mV | −100 mV | delta |
+|---|---|---|---|---|
+| all-core | MHz | 2300 | **2300** | — |
+| | package W | 14.18 | **11.40** | **−19.6 %** |
+| | system W | 23.4 | **19.8** | **−15.4 %** |
+| | peak C | 66 | 59 | −7 |
+| mixed | MHz | 2389 | 2297 | −3.9 % |
+| | package W | 10.64 | 8.07 | −24 % |
+| turbo-burst | MHz | 2148 | 2062 | −4.0 % |
+| | package W | 3.70 | 3.27 | −11.6 % |
+| idle | MHz | 783 | 787 | — |
+| | package W | 1.80 | 1.81 | — |
+
+The all-core row is the clean one: `balance_power` pins both arms to exactly
+2300 MHz — a ratio-23 ceiling, not a thermal or power effect — so power is the
+only variable left and the comparison is like-for-like. A fifth off package
+power and a seventh off the whole machine, at an identical clock. The idle row
+is the sanity check: with nothing running there is nothing to save, and nothing
+was saved.
+
+**So an undervolt does not make this laptop faster on battery. It makes it last
+longer.** At sustained all-core load, 23.4 W to 19.8 W against 71.7 Wh of
+battery is 3.1 hours becoming 3.6 — about **+18 % runtime**. Trust the ratio
+more than the hours: `power_now` and the capacity gauge disagree by about 10 %
+on the same leg (16.0 W by the meter, 14.4 W by 10.8 Wh drawn in 45 minutes),
+and no real workload looks like this phase mix, which is 45 % all-core
+saturation.
+
+> Two asymmetries between the arms, stated rather than smoothed over: the
+> control ran 10 minutes against the leg's 45, and it ran at a different battery
+> level. The all-core row survives both — 60 samples against 240, same pinned
+> clock — but the `mixed` and `turbo-burst` rows move in clock as well as power,
+> so their percentages are not clean single-variable comparisons.
+
+One practical note for repeating this: hold a screen inhibitor for the duration.
+`kde-inhibit --power --screenSaver systemd-inhibit --what=idle:sleep:handle-lid-switch …`
+is a held process rather than a settings change, so nothing needs undoing. Idle
+suspend is the real hazard, not the blank screen — a suspend mid-run puts the
+machine through a resume cycle, and the claw-back on resume is documented above.
+
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
 
