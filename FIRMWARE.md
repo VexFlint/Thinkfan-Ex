@@ -835,10 +835,38 @@ One thing it is *not*: the iGPU browning out. The iGPU is on its own rail. If it
 shared with core and cache, an active compositor would hold the rail up and the
 −27 % core power saving measured at −120 would have vanished — and it did not.
 
-> **This does not demote −120 mV, and it does not confirm it either.** One
-> unreplicated visual event, no logged corroboration, three live explanations and
-> no test yet run that separates them. What it does is remove −120 from the list
-> of things this file can currently attest.
+**Three hours later, the candidates are no longer equal.** The runs that
+followed — two hours at −100 mV on AC, 45 minutes at −100 mV on battery, and a
+10-minute control at 0 mV — all used the same harness, the same phases and the
+same five-second mailbox poll. **No artifact was reported in any of them.**
+Measured in the phase the artifact appeared in:
+
+| arm | turbo-burst exposure | artifacts |
+|---|---|---|
+| −120 mV | 120 s | **1** |
+| −100 mV, AC | 1560 s | 0 |
+| −100 mV, battery | 600 s | 0 |
+| 0 mV control | 120 s | 0 |
+
+**That is 19× the exposure at a shallower offset, with the instrument behaving
+identically, and nothing seen.** It weakens candidate 2 considerably: roughly
+2160 mailbox polls happened at −100 and 0 mV without producing an artifact, so
+polling *alone* does not do this. It weakens candidate 3 too, though absence
+never disproves a one-off. Candidate 1 — the ring and LLC at −120 — is now the
+one standing without a mark against it.
+
+> **Two things this does not establish.** The exposure ratio is machine time,
+> not observed time: the operator was not watching the screen continuously
+> through a two-hour unattended soak, so "no artifact reported" is weaker than
+> "no artifact occurred", and the battery leg and control — where the screen was
+> deliberately kept awake and someone was present — account for only 720 s of
+> that 2280 s. And candidate 2 is weakened in its simple form only. "The mailbox
+> poll perturbs the rail *when the rail is already at −120*" is untouched by any
+> of this, because nothing has polled at −120 since.
+>
+> **So −120 mV stays off the attestable list.** One unreplicated event, no
+> logged corroboration, and the two tests that would settle it — replicating at
+> −120, or running −120 with the poll interval widened — have not been run.
 
 ### −100 mV, held for two hours and checked the whole way
 
