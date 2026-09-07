@@ -841,19 +841,21 @@ followed — two hours at −100 mV on AC, 45 minutes at −100 mV on battery, a
 same five-second mailbox poll. **No artifact was reported in any of them.**
 Measured in the phase the artifact appeared in:
 
-| arm | turbo-burst exposure | artifacts |
-|---|---|---|
-| −120 mV | 120 s | **1** |
-| −100 mV, AC | 1560 s | 0 |
-| −100 mV, battery | 600 s | 0 |
-| 0 mV control | 120 s | 0 |
+| arm | turbo-burst exposure | artifacts | operator attention |
+|---|---|---|---|
+| −120 mV, original | 120 s | **1** | at the machine |
+| −120 mV, **replication** | 360 s | **0** | divided |
+| −100 mV, AC | 1560 s | 0 | mostly away |
+| −100 mV, battery | 600 s | 0 | present |
+| 0 mV control | 120 s | 0 | present |
 
 **That is 19× the exposure at a shallower offset, with the instrument behaving
 identically, and nothing seen.** It weakens candidate 2 considerably: roughly
 2160 mailbox polls happened at −100 and 0 mV without producing an artifact, so
 polling *alone* does not do this. It weakens candidate 3 too, though absence
-never disproves a one-off. Candidate 1 — the ring and LLC at −120 — is now the
-one standing without a mark against it.
+never disproves a one-off. ~~Candidate 1 — the ring and LLC at −120 — is now the
+one standing without a mark against it.~~ **Corrected by the replication below,
+which put a mark against candidate 1 as well.**
 
 > **Two things this does not establish.** The exposure ratio is machine time,
 > not observed time: the operator was not watching the screen continuously
@@ -867,6 +869,64 @@ one standing without a mark against it.
 > **So −120 mV stays off the attestable list.** One unreplicated event, no
 > logged corroboration, and the two tests that would settle it — replicating at
 > −120, or running −120 with the poll interval widened — have not been run.
+
+### The −120 replication, which did not reproduce it
+
+The first of those two tests was then run: 30 minutes at `-120.12 mV`, same
+harness, same phases, same five-second poll, same operating point — AC, EPP
+performance, MMIO PL1 22 W, 4.2 GHz cap, watch unit and `thinkfan-extreme`
+active, all confirmed before starting. **Nothing appeared.**
+
+| | |
+|---|---|
+| ran | 1801 s at `-120.12 mV`, verdict `completed` |
+| answers verified | 37 761 — sha 9451, int 9449, avx 9434, mem 9427 |
+| mismatches | 0 |
+| new machine-check banks | none |
+| 0 mV baseline afterwards | reproduces |
+| turbo-burst exposure | **360 s — 3× the run that produced the artifact** |
+| artifacts reported | **none** |
+
+**The machine was in the right state, and that was checked rather than assumed.**
+The artifact appeared in `turbo-burst`, whose whole point is one core at
+4.19 GHz while the other seven drop into deep C-states; any background load
+holding those cores busy would mean the regime was never entered and the
+replication would be worthless. The package-power record rules that out:
+
+| | idle mean / max PkgW | turbo-burst mean PkgW |
+|---|---|---|
+| −100 mV, 2 h AC | 2.12 / 4.29 | 9.32 |
+| −120 mV replication | **2.14 / 2.28** | **9.08** |
+
+Idle-phase power is within 0.02 W of the earlier run and its *maximum* is lower
+— 2.28 W against 4.29 W — so the cores genuinely idled and the deep-idle and
+transition regimes were entered as designed.
+
+**The weakness is in the observer, not the machine.** The artifact is visible
+only to a person looking at the screen, and during the replication the operator
+was working on a different machine. "Nothing noticed" over 30 minutes of divided
+attention is a weaker negative than the raw 3× exposure suggests — the original
+sighting happened under *active* attention and was caught within about six
+minutes. A dim, brief, or single-frame artifact could have passed unseen here in
+a way it would not have then.
+
+**The ranking still inverts, with that caveat attached.** Both voltage-linked
+candidates have now failed to reproduce: polling survived roughly 2160 polls at
+−100 and 0 mV, and the ring-and-LLC explanation survived 3× the exposure at
+−120 itself. That leaves **candidate 3 — coincidence** — as the best-supported
+reading, which is the one this file had been treating as least interesting.
+
+> **One event and one imperfect failed replication settles nothing.** A
+> transient that fires once in six minutes and then not once in thirty is not so
+> much *explained* by coincidence as *left unexplained*, and the honest position
+> is that this machine did something once that nobody has reproduced or
+> accounted for. The remaining clean test is the one still not run: −120 with
+> the mailbox poll widened, watched deliberately rather than incidentally.
+>
+> **It does not promote −120 mV.** 37 761 answers is a twelfth of what stands
+> behind −100, and a clean replication does not cancel a dirty observation.
+> **−100 mV remains the setting in stone**; −120 remains a place this machine has
+> been, twice, without a reason to stay.
 
 ### −100 mV, held for two hours and checked the whole way
 
