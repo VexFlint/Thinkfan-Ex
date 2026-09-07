@@ -61,7 +61,7 @@ echo "log:    ${LOG}"
 # the trap above is the safety net if the python below dies badly.
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 python3 - "$DUR" "$MV" "$MODE" "$LOG" <<'PY'
-import hashlib, multiprocessing as mp, os, struct, sys, time
+import glob, hashlib, multiprocessing as mp, os, struct, sys, time
 import numpy as np
 
 DUR, MV, MODE, LOGPATH = float(sys.argv[1]), float(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -259,9 +259,26 @@ def read_state():
             return open(p).read().strip()
         except OSError:
             return "?"
+    # This machine has two batteries and discharges BAT1 first, so BAT0 reads
+    # 100% for the first hour and a floor keyed to it would never fire. Sum
+    # them. power_now is also the only whole-machine wattmeter this laptop has,
+    # and it only reads while unplugged -- on AC the battery reports 0.
+    now = full = watt = 0
+    for b in sorted(glob.glob("/sys/class/power_supply/BAT*")):
+        for field, acc in (("energy_now", "now"), ("energy_full", "full"),
+                           ("power_now", "watt")):
+            v = cat(f"{b}/{field}")
+            if v.isdigit():
+                if acc == "now":
+                    now += int(v)
+                elif acc == "full":
+                    full += int(v)
+                else:
+                    watt += int(v)
     return {
         "ac": cat("/sys/class/power_supply/AC/online"),
-        "batt": cat("/sys/class/power_supply/BAT0/capacity"),
+        "batt": str(round(100 * now / full)) if full else "?",
+        "sys_w": f"{watt / 1e6:.1f}" if watt else "0.0",
         "epp": cat("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference"),
         "maxfreq": cat("/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"),
         "pl1_uw": cat("/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw"),
@@ -308,7 +325,7 @@ if MV != 0 and (abs(core_mv - MV) > 1.5 or abs(cache_mv - MV) > 1.5):
     sys.exit(1)
 
 say(f, "ts elapsed phase core_mv cache_mv Bzy_MHz PkgW CorW PkgTmp mmioW batt "
-       "sha int avx mem mismatch")
+       "sysW sha int avx mem mismatch")
 
 counters = mp.Array("l", NCPU * NSLOT, lock=False)
 stop = mp.Event()
@@ -355,7 +372,7 @@ try:
             say(f, f"{time.time():.0f} {now - start:7.1f} {name:11s} "
                    f"{cmv:+7.2f} {kmv:+7.2f} {mhz:7.1f} {pkg_w:5.2f} {cor_w:5.2f} "
                    f"{tmp:3d} {int(s['mmio_uw']) // 1000000 if s['mmio_uw'].isdigit() else 0:3d} "
-                   f"{s['batt']:>3s} {sha_n:6d} {int_n:6d} {avx_n:6d} {mem_n:6d} {bad:d}")
+                   f"{s['batt']:>3s} {s['sys_w']:>5s} {sha_n:6d} {int_n:6d} {avx_n:6d} {mem_n:6d} {bad:d}")
             if bad:
                 verdict = "MISMATCH"; break
             if tmp >= 99:
