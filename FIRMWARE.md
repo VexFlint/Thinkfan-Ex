@@ -984,6 +984,56 @@ is a held process rather than a settings change, so nothing needs undoing. Idle
 suspend is the real hazard, not the blank screen — a suspend mid-run puts the
 machine through a resume cycle, and the claw-back on resume is documented above.
 
+### The offset does not survive suspend — measured, not assumed
+
+−100 mV was made persistent, which raised the question of what a lid close does
+to it. The obvious test — suspend, resume, read the mailbox — cannot answer it,
+because anything that re-applies on resume has already run by the time you look.
+"Survived S3" and "was restored for you" produce an identical reading and are
+different facts about the hardware.
+
+So a probe was ordered in front of the re-apply: a oneshot unit on the same
+resume path, `Before=intel-undervolt.service`, that reads all five planes and
+appends them to a log. One lid close, and:
+
+```
+22:33:08 pre-reapply  core=+0.00 igpu=+0.00 cache=+0.00 sa=+0.00 aio=+0.00
+22:33:08 intel-undervolt: CPU (0): -99.61 mV / CPU Cache (2): -99.61 mV
+```
+
+Both planes read `-99.61 mV` going into the suspend. **They come back at zero.**
+S3 drops the OC mailbox entirely, and the offset that was there before the lid
+closed is simply gone — restored a fraction of a second later only because a unit
+was there to do it.
+
+Two things follow. **It fails safe**: a machine that loses the re-apply — unit
+disabled, package removed, a boot into something else — resumes at stock voltage
+and keeps working, rather than resuming undervolted into a state nothing has
+validated. And **an unmanaged undervolt is not persistent in any sense**; every
+suspend silently discards it, so anyone measuring after a lid close without a
+re-apply unit is measuring a stock machine and may not know it.
+
+This also sits alongside the claw-back already documented above: on the same
+resume, `thinkpad-power-unlock` restored TCC 4 and MMIO PL1 22 W. Resume resets
+more than one thing on this machine, and each one needs its own hook.
+
+### What is installed, and how to remove it
+
+| piece | role |
+|---|---|
+| `/etc/intel-undervolt.conf` | −100 mV on planes 0 and 2, with the evidence and the shared-rail warning in the comments |
+| `intel-undervolt.service` | applies at boot and on resume — the same shape as `thinkpad-power-unlock.service` |
+| `uv-resume-probe.service` | records the pre-re-apply readback on every resume, to `/var/log/uvsoak/resume-probe.log` |
+
+`intel-undervolt-loop.service` — the daemon that re-applies every five seconds —
+is deliberately **not** enabled. Nothing needs it, and it would poll the mailbox
+continuously, which is the one candidate for the −120 mV display artifact that
+has not been ruled out.
+
+To remove: `sudo systemctl disable --now intel-undervolt.service
+uv-resume-probe.service`, then reboot or power-cycle. Nothing persists in
+hardware, so the reboot alone returns every plane to 0.00 mV.
+
 The protocol, so it does not have to be re-derived — write the command word to
 `MSR 0x150`, then read the same MSR back:
 
