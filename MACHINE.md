@@ -123,8 +123,11 @@ $ lspci -nn | grep -i 15b7    # (no output)
 $ who -b                      # system boot  2026-09-08 13:45
 ```
 
-**Suspend was then re-tested and works**, 13:58:10 → 13:58:27, deep S3, no
-device failed and nothing needed a second attempt:
+**Suspend was then re-tested and works** — 13:58:10 → 13:58:27 by the kernel's
+own entry/exit, of which **11.9 s was actually spent suspended** (measured as
+the growth in `CLOCK_BOOTTIME` − `CLOCK_MONOTONIC`, which is exactly the time in
+S3 and nothing else). Deep S3, no device failed, nothing needed a second
+attempt:
 
 ```
 PM: suspend entry (deep)
@@ -149,7 +152,7 @@ PM: suspend exit          # and no "Some devices failed to suspend" between them
 > 2026-09-08 12:24:31  core=+0.00   cache=+0.00     <- real S3, 23h49m asleep
 > 2026-09-08 13:16:42  core=-99.61  cache=-99.61    <- suspend ABORTED by nvme
 > 2026-09-08 13:41:27  core=-99.61  cache=-99.61    <- suspend ABORTED by nvme
-> 2026-09-08 13:58:27  core=+0.00   cache=+0.00     <- real S3, 17s, post-fix control
+> 2026-09-08 13:58:27  core=+0.00   cache=+0.00     <- real S3, 11.9s, post-fix control
 > ```
 >
 > They are not survival; they are a suspend that never happened. **Pair every
@@ -162,10 +165,37 @@ PM: suspend exit          # and no "Some devices failed to suspend" between them
 >
 > The finding itself is unaffected — **suspend wipes the mailbox** still rests
 > on the `+0.00` rows from every suspend that actually completed, including the
-> deliberate 17-second control run after the reboot. That last row is the useful
-> one: it shows the wipe does not need a long sleep. **17 seconds in S3 is
-> enough to clear the mailbox**, so the re-apply is not an optimisation for long
-> suspends, it is required for all of them.
+> deliberate short control run after the reboot. That last row is the useful
+> one: it shows the wipe does not need a long sleep. **Under twelve seconds in
+> S3 is enough to clear the mailbox**, so the re-apply is not an optimisation
+> for long suspends, it is required for all of them.
+>
+> The probe now tags its own rows, so this trap does not need catching by hand
+> twice — see [`FIRMWARE.md`](FIRMWARE.md#the-offset-does-not-survive-suspend--measured-not-assumed).
+
+### `rtcwake` and direct `/sys/power/state` writes skip every sleep hook
+
+Anything that suspends by writing `/sys/power/state` itself — `rtcwake` is the
+common one — bypasses logind, so `suspend.target` never fires and **none of the
+resume units run**. On this machine that is three separate problems at once:
+
+```
+$ sudo rtcwake -m mem -s 20
+rtcwake: write error
+nvidia 0000:01:00.0: PM: pci_pm_suspend(): nv_pmops_suspend [nvidia] returns -5
+PM: Some devices failed to suspend, or early wake event detected
+```
+
+It fails outright, because `nvidia-suspend.service` and
+`/usr/lib/systemd/system-sleep/nvidia` are what prepare the MX150 for sleep and
+neither of them ran. **And had it succeeded it would have been worse**: S3 wipes
+the OC mailbox, and `intel-undervolt.service`, `thinkpad-power-unlock.service`
+and `uv-resume-probe.service` are all `WantedBy=suspend.target`, so the machine
+would have resumed at stock voltage, stock PL1 and stock TCC with nothing to
+notice or say so.
+
+**Use `systemctl suspend`.** The same 20-second sleep through logind works, runs
+the nvidia hook, and re-applies all three.
 
 ### The two risk tiers this repo works in
 
