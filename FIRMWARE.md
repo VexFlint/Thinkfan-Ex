@@ -221,9 +221,8 @@ Disabling it runs `DYTC(0x01FF)`.
 TCC goes 4 to 3. PL1 is untouched — verified over 45 s idle and over a full 300 s
 `burnboth` run, which held 22 W, 21.7 W sustained, 97 C peak, no `LIMITS CHANGED`.
 
-**A second enable cycle clamps PL1 to 15 W.** Disable an already-enabled zone and
-re-enable it, and about 2 s later MMIO PL1 becomes `15000000` — and stays. Three
-independent runs, identical each time:
+**Disabling the zone clamps PL1 to 15 W.** Within 1 s of `disabled`, MMIO PL1
+becomes `15000000` — and stays. Three independent runs, identical each time:
 
 ```
 trial 1   baseline TCC=4 PL1=22000000   after enable: TCC=3 PL1=22000000
@@ -237,19 +236,62 @@ The `power-unlock` oneshot ran at the top of trial 2 and **succeeded** — exit 
 later. So this is not a failed write; it is the firmware winning a write it did
 not make first.
 
+> **Correction (2026-09-08).** This section originally read the clamp as needing
+> a *second enable cycle*, and open question 5b asked why. It does not: the
+> trigger is the **disable**. Stepped at 1 s resolution from a clean baseline:
+>
+> ```
+> ENABLE:   +1s  TCC=3  PL1=22000000     <- TCC moves, PL1 does not
+>           +5s  TCC=3  PL1=22000000
+> DISABLE:  +1s  TCC=3  PL1=15000000     <- the clamp lands here
+>           +5s  TCC=3  PL1=15000000
+> ```
+>
+> Reproduced twice. The trial log above is consistent with this once read that
+> way — the `[+2242ms] TCC/PL1 = 3/15000000` line follows trial 1's *disable*,
+> and trial 2 merely opens with the value already clamped. The original reading
+> sampled after each enable, so a change caused by the intervening disable was
+> attributed to the enable that came next. So `DYTC(0x01FF)` — the withdrawal —
+> is what clamps PL1, not `DYTC(0x000F0001)`. Question 5b is withdrawn: it was
+> asking about an artifact of sampling order.
+
 Disabling the zone and re-applying restores 22 W. Nothing survives a reboot.
 
 Reproduce it (this **overrides your power limits while enabled**):
 
 ```bash
 sudo systemctl stop thinkpad-power-unlock-watch     # or it fights the firmware
+D=/sys/bus/platform/devices/INT3400:00
 Z=/sys/class/thermal/thermal_zone1
-echo enabled  > $Z/mode      # first cycle: TCC 4 -> 3 only
-echo disabled > $Z/mode
-echo enabled  > $Z/mode      # second cycle: PL1 -> 15000000
-echo disabled > $Z/mode      # release
-sudo systemctl start thinkpad-power-unlock
+# On kernel 7.2.2 the zone will not enable until a UUID is selected -- a bare
+# `echo enabled > $Z/mode` fails with rc=1 and changes nothing. This is new
+# since the recipe was first written; pick any of $D/uuids/available_uuids.
+echo 3A95C389-E4B8-4629-A526-C52C88626BAE > $D/uuids/current_uuid
+echo enabled  > $Z/mode      # TCC 4 -> 3, odvp0 0 -> 7
+echo disabled > $Z/mode      # PL1 -> 15000000
+sudo systemctl start thinkpad-power-unlock          # put both limits back
 ```
+
+**`odvp0` moves with it, and that makes it a witness.** `_OSC` provably calls
+`DYTC(0x000F0001)`, and `odvp0` goes 0 → 7 at the enable. So odvp0 does track
+DYTC invocation, which is what open question 3 needs — but with two caveats that
+decide how it can be used:
+
+- **It is a one-way latch.** It stays 7 through the disable, through a
+  `current_uuid` reset, and through re-applying the limits. Nothing short of a
+  reboot puts it back to 0. So it witnesses "DYTC has been invoked since boot",
+  not "DYTC was invoked just now" — **any hunt that uses odvp0 as a live witness
+  must start from a fresh boot**, or the instrument is already tripped and reads
+  7 no matter what happens.
+- **It is also a discriminator.** Forced DPTF sets odvp0 to 7. If a wild
+  claw-back leaves odvp0 at 0, that is independent evidence the wild path is not
+  this one — which would corroborate the TCC 3-vs-30 argument below with a
+  second, unrelated register.
+
+**The DPTF path raises SMIs.** `MSR_SMI_COUNT` went 2972 → 2978 across the
+forcing sequence: six SMIs. That is consistent with `DYTC` resolving to
+`PSIF` → `SMI(0x14, ...)` as traced in HANDOFF.md, and it means the SMI counter
+is a live instrument for this path rather than a hoped-for one.
 
 > **Still not proof that the wild claw-back is this path.** The PL1 value matches
 > exactly and the mechanism demonstrably overrides a successful write, but the
@@ -1387,17 +1429,27 @@ observe, reboot to confirm it resets, and only then automate it.
    one did. Two caveats: the MSR was read on cpu0 only, and this is a single
    capture. It is also the first revert caught **on AC** — every prior one was
    on battery — so AC is not immune.
-2. **Does `odvp0` move at the revert?** Same probe, same non-result.
+2. **Does `odvp0` move at the revert?** Still unobserved, but the instrument is
+   now calibrated rather than hoped-for: forcing DPTF moves odvp0 from 0 to 7,
+   so it does respond to `DYTC`. The catch is that it is a one-way latch that
+   only a reboot clears, so a run that starts with odvp0 already at 7 cannot
+   answer this. Any attempt must begin from a fresh boot with odvp0 confirmed
+   at 0.
 3. **Is DYTC invoked during load?** Nothing observed yet; no OS-side trigger
-   exists on this machine.
+   exists on this machine. Now answerable, because odvp0 is a validated DYTC
+   witness (see question 2): a load run that starts at odvp0=0 and ends at 7
+   means firmware invoked DYTC on its own, and one that ends at 0 means it did
+   not.
 4. ~~What is in `data_vault`?~~ **Answered** — decoded above; `fwmap.sh` unpacks
    it on every run.
 5. **Why does forced DPTF land TCC at 3 when the wild claw-back lands it at 30?**
    Same register, same subsystem, different value. Until that is explained the
    DPTF path is a strong candidate rather than the identified cause.
-5b. **Why does the PL1 clamp need a second enable cycle?** The first `_OSC` only
-   moves TCC. Reproducible, unexplained — likely the `DYTC(0x01FF)` withdrawal
-   leaving state that the next entry applies differently.
+5b. ~~Why does the PL1 clamp need a second enable cycle?~~ **Withdrawn
+   2026-09-08 — it does not.** The clamp lands within 1 s of the *disable*
+   (`DYTC(0x01FF)`), not on any enable. The question was an artifact of sampling
+   only after each enable. See the correction under "DPTF writes these
+   registers" above.
 6. **What enables DPTF in the wild?** The zone is `disabled` at boot and nothing
    in userspace turns it on here. If firmware can enable it autonomously under
    load, that closes the loop.
