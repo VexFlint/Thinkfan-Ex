@@ -981,7 +981,10 @@ lost, so a reboot alone returns all five planes to 0.00 mV.
 Every measurement, every failed hypothesis and every correction is in
 [`FIRMWARE.md`](FIRMWARE.md) — including the shared-rail discovery, the −140 mV
 hang, and the −120 mV artifact that has never been explained. The BIOS side,
-which is research rather than procedure, is in [`BIOS-MOD.md`](BIOS-MOD.md).
+which is research rather than procedure, is in [`BIOS-MOD.md`](BIOS-MOD.md) —
+including the firmware's own hidden "Intel Advanced Menu", which carries a
+voltage-offset control driving the same `MSR 0x150` mailbox by a route that
+cannot be undone with a reboot.
 
 ## Safety
 
