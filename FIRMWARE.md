@@ -1081,6 +1081,36 @@ This also sits alongside the claw-back already documented above: on the same
 resume, `thinkpad-power-unlock` restored TCC 4 and MMIO PL1 22 W. Resume resets
 more than one thing on this machine, and each one needs its own hook.
 
+A later run put a lower bound on how long the suspend has to be. A deliberate
+17-second S3 — down at 13:58:10, up at 13:58:27 — came back at `+0.00` just like
+the multi-hour ones. **The wipe is not a slow drain; it is immediate.** There is
+no "short nap" case where the offset would have held.
+
+> [!WARNING]
+> **A suspend that aborts still writes a row to this log, and the row looks like
+> good news.** The probe is `WantedBy=suspend.target`, and a failed suspend fires
+> that target as surely as a successful one — so the machine wakes without ever
+> having lost power to the core rail, and the probe faithfully records the offset
+> still in place:
+>
+> ```
+> 13:16:42 pre-reapply core=-99.61 cache=-99.61      # suspend ABORTED, not survival
+> 13:41:27 pre-reapply core=-99.61 cache=-99.61      # suspend ABORTED, not survival
+> ```
+>
+> Those two rows are real, and they are in this machine's log — written while a
+> stale `nvme0` was refusing to suspend with `-16` (see
+> [`MACHINE.md`](MACHINE.md#a-removed-nvme-leaves-a-stale-device-that-blocks-suspend--cleared)).
+> Read alone they refute the finding this whole section establishes. **Pair every
+> row with the kernel's own verdict before believing it:**
+>
+> ```bash
+> journalctl -b -k | grep -E 'PM: suspend (entry|exit)|failed to suspend'
+> ```
+>
+> A trustworthy row has a `PM: suspend exit` with no `PM: Some devices failed to
+> suspend` before it. Anything else measured nothing.
+
 ### What is installed, and how to remove it
 
 | piece | role |
