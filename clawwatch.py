@@ -24,6 +24,9 @@ What it witnesses, and which question each is there for:
                                               an SMI, and the counter Q11 is
                                               about. Cumulative; turbostat's SMI
                                               column is its per-interval delta.
+                                              RESETS ACROSS S3 -- the delta goes
+                                              negative and stays meaningless from
+                                              a resume onward (measured 2026-09-08).
   core/package throttle counters              CoreThr, the other half of Q11
   MSR_PERF_LIMIT_REASONS                      which limiter is active
 
@@ -36,6 +39,13 @@ warns about exactly that trap, and it is why this is a separate script from
 
 Every line is flushed and fsynced. If the machine hangs, the last line on disk
 is the last thing that was true -- the lesson uvsoak.sh already paid for.
+
+Across a suspend, two columns lie and the register columns do not. PkgW is
+garbage in the first post-resume sample (the RAPL energy counter resets while
+time.monotonic() correctly excludes the suspended time, so that one delta is
+nonsense -- 56981.38 W in the capture of 2026-09-08), and SMI is wrong from there
+on for the reason above. TCC, both PL1 copies and odvp are unaffected, which is
+what a resume capture is actually for.
 """
 import glob
 import os

@@ -527,6 +527,117 @@ What this adds, and what it does not:
 The count is now one revert in four comparable AC runs on top of one in five on
 battery, and the trigger is still unidentified.
 
+### Resume reverts both registers, and the kernel hides half of it (2026-09-08)
+
+The controlled resume test this file has been asking for, run with every repairer
+out of the way. `thinkpad-power-unlock.service` was removed from
+`suspend.target.wants` — the boot path left intact — because it re-applies both
+limits within ~0.3 s of resume and is what wrote the `ok TCC offset = 4` line
+under the REVERT lines in the wild capture above. The watch unit was already
+disabled. `intel-undervolt` was checked and left alone: its config carries only
+voltage offsets, no TCC, PL1 or RAPL directive, and at resume it logged only mV.
+`uv-resume-probe` reads and does not write.
+
+Limits at TCC 4 / PL1 22 W, BAT0 on `force-discharge` so the machine ran off the
+pack with AC still plugged, idle, and `--no-load` deliberately — after eight
+cold-start load trials the same session (below), a revert during a load
+excursion would not have been attributable to the resume. `clawwatch.py`
+witnessed at 1 Hz straight across the suspend; it never writes a register.
+S3 entry 18:17:39, resume 18:29:54, twelve minutes down.
+
+```
+   t   PkgW  MHz   C  TCC   mmioPL1  msrPL1  SMI  cThr  limiter
+   42  11.10 4009  65   4    22.00   25.00    0     0  max-turbo
+   46 56981.38 3731  35  30    15.00   25.00 -2781     0  PL2
+### t=46s  tcc: 4  ->  30
+### t=46s  pl1: 22000000  ->  15000000
+### t=46s  odvp: 0,0,0,...  ->  7,0,0,...
+   48  17.28 3549  48  30    22.00   25.00 -2781     0  -
+### t=48s  pl1: 15000000  ->  22000000
+```
+
+**Both registers revert, and `odvp0` moves with them — question 2 answered.**
+The run began from a fresh boot with odvp0 confirmed at 0, which is the only
+condition under which that question can be asked, and the latch was spent on
+this capture rather than on DPTF forcing. At the first post-resume sample TCC is
+30, MMIO PL1 is 15000000, and odvp0 has gone 0 → 7. The MSR copy read 25.00 W
+before and after, consistent with question 1.
+
+**That kills `odvp0` as a discriminator, which is a correction to the calibration
+committed hours earlier.** Yesterday's reading was that forced DPTF sets odvp0 to
+7, so a wild claw-back leaving it at 0 would be independent evidence the wild
+path is not the DPTF path — corroborating the TCC 3-vs-30 argument with an
+unrelated register. The wild claw-back sets it to 7 as well. So odvp0 is reached
+by both paths and cannot separate them. This is **not** evidence that the wild
+path *is* the DPTF path; it removes odvp0's ability to say it is not, and leaves
+the TCC 3-vs-30 difference standing unaided as the whole of that argument.
+
+**Nothing enabled the Linux zone — question 6 narrowed.** Across the revert,
+`thermal_zone1/mode` stayed `disabled` and `current_uuid` stayed `INVALID`, while
+odvp0 went to 7. Firmware moved its own policy variable without the OS-visible
+DPTF zone ever coming up. So the thing to look for is not firmware enabling the
+zone Linux can see; the register writes and the policy variable move on a path
+that leaves the zone alone.
+
+**The kernel puts MMIO PL1 back, and that has been hiding half of every resume
+revert.** PL1 returns to 22000000 two seconds later while TCC stays at 30. No
+userspace writer did it: the journal shows only `uv-resume-probe` (read-only) and
+`intel-undervolt` (mV only) running at resume, `thinkpad-power-unlock` provably
+did not run, the watch unit was disabled, and `thinkfan-ex` contains no reference
+to either register. The agent is the kernel — `intel_rapl_common` exports
+`rapl_pm_notifier` and `rapl_pm_callback`, and the powercap layer re-applies the
+constraint it has cached for the MMIO domain after `PM_POST_SUSPEND`. The TCC
+offset has no such driver-side cache, so it stays where firmware left it.
+
+Two consequences. **Firmware reverts both registers at resume**, symmetrically,
+and the asymmetric end state is Linux's doing rather than a firmware quirk. And
+**reading MMIO PL1 from sysfs after a resume cannot tell you whether it was
+reverted** — it will read 22 W either way, a couple of seconds later. Any past
+or future "PL1 survived the resume" conclusion drawn that way is void; only a
+sampler running across the transition, or the watchdog's own log, can see it.
+
+**`MSR_SMI_COUNT` resets across S3, so it is not an instrument for resume.** It
+read 3154 before the suspend and restarted afterwards, reaching 373 by the end of
+the run — hence the negative `SMI` column, which is a delta against a
+pre-suspend baseline that no longer exists. Question 11 leans on this counter;
+that lean is valid within a boot and void across a sleep.
+
+Two instrument caveats this run exposed, both in `clawwatch.py`: the `PkgW` column
+is meaningless at the resume boundary (56981.38 W — the RAPL energy counter resets
+while `time.monotonic()` correctly excludes the suspended time, so the first
+post-resume delta is garbage), and the `SMI` column is meaningless from the
+boundary onward for the reason above. The register columns, which are what the
+capture is for, are unaffected.
+
+Left standing afterwards for the record: `coreThr` 10 and `pkgThr` 40 accumulated
+while TCC sat at 30, which is the reverted offset throttling at 70 C exactly as it
+says it should.
+
+### Eight cold-start trials on AC, none reverted (2026-09-08)
+
+Run before the resume test, as the observational stage the batched block called
+for: 120 s of 8-thread load per trial, each preceded by a cooldown to ≤52 C with
+the fan stopped, so every trial was a genuine cold start rather than a
+continuation. AC, EPP `performance`, TCC 4 / PL1 22 W, watch unit disabled,
+witnessed at 1 Hz by `clawwatch.py`.
+
+Seven ran the full 120 s; the eighth was cut short at 74 samples when the
+campaign was stopped to free the machine for the resume test. All eight held.
+Peaks 30.5–33.6 W at 91–92 C, every trial inside or above the excursion band of
+the run that reverted (32 W, 81 C), and odvp0 ended at 0 in all eight. Nothing
+moved in 872 samples.
+
+This is further evidence against the cold-fan hypothesis, which the direct test
+above already failed to reproduce — these trials reproduced the cold-start
+condition eight times over with the fan stopped at trial onset, at higher peak
+power and higher temperature than the reverting run, and produced nothing. It
+also answers **question 3 for the load case**: firmware did not invoke DYTC
+during any of them, odvp0 having stayed at 0 throughout. Where it *is* invoked is
+at resume, which the section above catches directly.
+
+The AC load count is now one revert in eleven comparable full-length runs,
+against one in five on battery.
+
 ## DYTC — Lenovo Intelligent Cooling
 
 The most interesting thing found so far, and the leading claw-back suspect.
@@ -1429,17 +1540,22 @@ observe, reboot to confirm it resets, and only then automate it.
    one did. Two caveats: the MSR was read on cpu0 only, and this is a single
    capture. It is also the first revert caught **on AC** — every prior one was
    on battery — so AC is not immune.
-2. **Does `odvp0` move at the revert?** Still unobserved, but the instrument is
-   now calibrated rather than hoped-for: forcing DPTF moves odvp0 from 0 to 7,
-   so it does respond to `DYTC`. The catch is that it is a one-way latch that
-   only a reboot clears, so a run that starts with odvp0 already at 7 cannot
-   answer this. Any attempt must begin from a fresh boot with odvp0 confirmed
-   at 0.
-3. **Is DYTC invoked during load?** Nothing observed yet; no OS-side trigger
-   exists on this machine. Now answerable, because odvp0 is a validated DYTC
-   witness (see question 2): a load run that starts at odvp0=0 and ends at 7
-   means firmware invoked DYTC on its own, and one that ends at 0 means it did
-   not.
+2. ~~Does `odvp0` move at the revert?~~ **Answered 2026-09-08 — yes, 0 → 7.**
+   Caught on a resume revert witnessed at 1 Hz from a fresh boot with odvp0
+   confirmed at 0, with every repairer removed first. TCC 4 → 30, MMIO PL1
+   22 W → 15 W and odvp0 0 → 7 all in the first post-resume sample. The cost of
+   the answer is that it also **removes odvp0 as a discriminator**: it is set by
+   the wild path as well as by forced DPTF, so it cannot separate them, and the
+   TCC 3-vs-30 difference in question 5 now stands unaided. See "Resume reverts
+   both registers" above.
+3. **Is DYTC invoked during load?** **No, across eight trials (2026-09-08)** —
+   eight cold-start 120 s load runs from odvp0=0 all ended at odvp0=0, at up to
+   33.6 W and 92 C. Firmware did invoke it **at resume**, where odvp0 went 0 → 7
+   in the same sample as the register revert. So the answer is "not under load,
+   yes across a sleep", on one resume capture and eight load runs. What remains
+   open is whether a load-triggered revert — the rarer event these eight did not
+   catch — also moves it; odvp0 cannot be reused for that within this boot, since
+   the latch is now spent until a reboot.
 4. ~~What is in `data_vault`?~~ **Answered** — decoded above; `fwmap.sh` unpacks
    it on every run.
 5. **Why does forced DPTF land TCC at 3 when the wild claw-back lands it at 30?**
@@ -1450,21 +1566,29 @@ observe, reboot to confirm it resets, and only then automate it.
    (`DYTC(0x01FF)`), not on any enable. The question was an artifact of sampling
    only after each enable. See the correction under "DPTF writes these
    registers" above.
-6. **What enables DPTF in the wild?** The zone is `disabled` at boot and nothing
-   in userspace turns it on here. If firmware can enable it autonomously under
-   load, that closes the loop.
+6. **What enables DPTF in the wild?** **Narrowed 2026-09-08 — nothing does, and
+   it does not need to.** Across the resume revert `thermal_zone1/mode` stayed
+   `disabled` and `current_uuid` stayed `INVALID` while odvp0 went 0 → 7 and both
+   registers moved. Firmware changes its own policy variable and writes the
+   registers without the OS-visible zone ever coming up, so the thing to look for
+   is not firmware enabling the zone Linux can see.
 7. ~~Which path enforces the DC budget?~~ **Answered — there is no DC budget.**
    The 12-15 W battery ceiling was `power-profiles-daemon` setting EPP to
    `balance_power`. With EPP at `performance` and PL1 held at 22 W, the machine
    sustains 21.9 W on battery. The `_DC` rows in the policy table cap what DPTF
    would apply if it ran; nothing was applying them.
-8. **What triggers the claw-back?** Still open, and now with battery state,
-   temperature and peak power all ruled out as sufficient. The surviving
-   hypothesis is a power/thermal excursion taken while the fan is still ramping
-   from cold — one supporting run, no controlled pair, and one direct test that
-   failed to reproduce it. A further AC capture on 2026-09-08 ruled out an
-   out-of-range (sub-TDP) PL1 write as the trigger and showed AC runs revert
-   too.
+8. **What triggers the claw-back?** Still open for the *load* case, but **resume
+   is now a reproduced trigger** — a controlled, idle, `--no-load` suspend with
+   every repairer removed reverted both registers on the first post-resume
+   sample (2026-09-08), the second resume revert on record and the first
+   instrumented one. The cold-fan hypothesis should now be treated as dead
+   rather than merely unreproduced: eight cold-start trials with the fan stopped
+   at onset, at up to 33.6 W and 92 C — hotter and harder than the run that
+   reverted — produced nothing. Battery state, temperature, peak power, fan
+   state and an out-of-range (sub-TDP) PL1 write have each been ruled out as
+   sufficient. What separates a load run that reverts from the eleven AC and five
+   battery runs that do not is still unidentified; resume is the only trigger
+   anyone can currently make happen on purpose.
 9. **Is there a DC ceiling above 22 W at all?** Untested. PL1 22 W was the
    binding limit in the run that reached 21.9 W, so the question of what the
    pack and the EC allow above that is unprobed.
@@ -1482,3 +1606,7 @@ observe, reboot to confirm it resets, and only then automate it.
    battery run reported zero of both?** Only the first run after plugging in.
    Charging is the obvious difference, and the SMI counter is the instrument the
    claw-back hunt is counting on, so what raises it here is worth knowing.
+   **Instrument caveat added 2026-09-08:** `MSR_SMI_COUNT` **resets across S3**.
+   It read 3154 before a suspend and restarted after it, so the counter is a
+   valid cumulative instrument within a boot and void across a sleep — a resume
+   capture cannot use it at all.
