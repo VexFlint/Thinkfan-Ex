@@ -25,6 +25,7 @@ you want your own curve. This gives you one.
 
 | | |
 |---|---|
+| **[`MACHINE.md`](MACHINE.md)** | **Verified facts about the test machine — read before assuming any of them** |
 | [What it does](#what-it-does) | The installer, the daemon, and the companion tools |
 | [Requirements](#requirements) · [Installation](#installation) | Getting it running |
 | **[Commands](#commands)** | **Every command in the suite, in three tables** |

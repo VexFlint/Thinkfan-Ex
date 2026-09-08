@@ -122,10 +122,20 @@ the firmware that decides whether this laptop turns on.
 | A T480-specific guide exists for unlocking the hidden menu | **Dead link.** The widely-cited "Thinkpad T480 unlock BIOS hidden menu + modify whitelist + cfg lock" is hosted on `programming.vip`, which no longer resolves |
 | T480 CFG Lock sits at `VarOffset 0x3C`, `VarStore 0x3` | **Confirmed** against this machine's own firmware — see below. The [poster](https://github.com/taina0407/T480-OpenCore-Hackintosh/issues/4) had not tested it; the IFR dump says they were right |
 | `LenovoHiddenSetting` unhides menus when its bits are set | **Refuted here.** The variable is referenced by no setup form in this firmware |
-| Some ThinkPads brick permanently from one UEFI setting | **Established, and does not apply here.** "Thunderbolt BIOS Assist" killed P52, P52s, P1, P72 and X1 Yoga 2018 boards. [The T480 has no Thunderbolt and is not affected](https://www.notebookcheck.net/Some-recent-ThinkPads-can-be-destroyed-by-changing-a-UEFI-BIOS-setting.346156.0.html) |
+| Some ThinkPads brick permanently from one UEFI setting | **Established, and it DOES apply here.** ~~The T480 has no Thunderbolt and is not affected~~ — **wrong, corrected 2026-09-08.** This machine has a JHL6240 Thunderbolt 3 controller, the T480 20L5/20L6 is on the affected list, and `ThunderboltBIOSAssistMode` is exposed by `think-lmi` and writable from Linux. See [`MACHINE.md`](MACHINE.md#hazards) |
 
-The last row is the only piece of unambiguously good news: the specific landmine
-that has destroyed ThinkPad boards is not in this machine's path.
+> [!CAUTION]
+> **The last row was written the wrong way round and stood for two days.** It
+> said the board-killing landmine was not in this machine's path. It is: the
+> T480 has Thunderbolt 3 (`JHL6240`, verified on the PCI bus), the 20L5/20L6 is
+> on the affected list, and `ThunderboltBIOSAssistMode` is not even hidden — it
+> sits in `think-lmi` alongside the 79 ordinary settings, one `echo` away.
+> It currently reads `Disable`. **Leave it there.**
+>
+> The error came from generalising an article's sentence about cheaper
+> Thunderbolt-less ThinkPads instead of running `lspci`. Full verified inventory
+> is now in [`MACHINE.md`](MACHINE.md), which exists so this class of mistake
+> stops happening.
 
 ## The two routes
 
@@ -306,9 +316,9 @@ the dump produced, and left alone.
 Frequency`, `SA GV`, `Rank Margin Tool` — DRAM timing control on a laptop whose
 menu offers none. *Graphics*: `DVMT Pre-Allocated`, `DVMT Total Gfx Mem`, `LCD
 Panel Type`, `Panel Color Depth`. *Debug*: `TraceHub Enable Mode`, `JTAG C10
-Power`. *Thunderbolt*: a complete 47-setting form on a machine with no
-Thunderbolt port, which is a good reminder that a populated form proves the code
-was compiled in and nothing more.
+Power`. *Thunderbolt*: a complete 47-setting form — and unlike the
+`Realsense 3D Camera` form next to it, this hardware **is** present, so those
+settings are live rather than vestigial.
 
 ## Is any of this worth wanting?
 
