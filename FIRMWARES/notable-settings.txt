@@ -1,0 +1,132 @@
+Notable non-power settings in the Intel Advanced Menu, T480 BIOS N24ET79W (1.54)
+Offsets are firmware-version specific. 'reach' = varstore exists as a live EFI variable.
+
+--- Management Engine (13) ---
+  yes  PchSetup             0x613   ChipsetInit HECI Message
+  NO   MeSetupStorage       0x2     ME State
+  NO   MeSetup              0x2C    ME Unconfig on RTC Clear
+  NO   MeSetup              0x3     Me FW Image Re-Flash
+  NO   MeSetupStorage       0x1     Local FW Update
+  NO   MeSetup              0x7     HECI Timeouts
+  NO   MeSetup              0x8     Force ME DID Init Status
+  NO   MeSetup              0xA     ME DID Message
+  NO   MeSetup              0xB     HECI Retry Disable
+  NO   MeSetup              0xC     HECI Message check Disable
+  NO   MeSetup              0xE     HECI2 Interface Communication
+  NO   MeSetup              0x11    D0I3 Setting for HECI Disable
+  NO   MeSetup              0x20    USB Provisioning of AMT
+
+--- Debug interfaces (4) ---
+  yes  CpuSetup             0x8     JTAG C10 Power
+  yes  CpuSetup             0xED    Debug Interface
+  yes  CpuSetup             0xEE    Debug Interface Lock
+  yes  PchSetup             0x5F0   TraceHub Enable Mode
+
+--- Security / flash (5) ---
+  yes  CpuSetup             0xF0    Flash Wear Out Protection
+  yes  CpuSetup             0xEE    Debug Interface Lock
+  yes  PchSetup             0x17    BIOS Lock
+  NO   MeSetupStorage       0x6     TPM 1.2 Deactivate
+  yes  Setup                0x4A8   Force Secure Erase
+
+--- Virtualisation (2) ---
+  yes  CpuSetup             0xCD    Intel (VMX) Virtualization Technology
+  yes  SaSetup              0xE3    VT-d
+
+--- Memory / DRAM (71) ---
+  yes  SaSetup              0x11    tCL
+  yes  SaSetup              0x17    tRCD/tRP
+  yes  SaSetup              0x20E   tRd2RdDR
+  yes  SaSetup              0x212   tWr2RdDR
+  yes  SaSetup              0x10F   Maximum Memory Frequency
+  yes  SaSetup              0x12B   SA GV
+  yes  SaSetup              0x12C   SA GV Low Freq
+  yes  SaSetup              0x121   Lpddr Mem WL Set
+  yes  SaSetup              0x148   Rank Margin Tool
+  yes  SaSetup              0x149   Memory Test
+  yes  SaSetup              0x154   DDR PowerDown and idle counter
+  yes  SaSetup              0x155   For LPDDR Only: DDR PowerDown and idle counter
+  yes  SaSetup              0x157   LPDDR Thermal Sensor
+  yes  SaSetup              0x191   For LPDDR Only: Throttler CKEMin Defeature
+  yes  SaSetup              0x192   For LPDDR Only: Throttler CKEMin Timer
+  yes  Setup                0x288   Device's bus address
+  yes  Setup                0x289   Device's HID address
+  yes  Setup                0x28F   Device's bus address
+  yes  Setup                0x290   Device's HID address
+  yes  Setup                0x115   I2C Address
+  yes  Setup                0x117   I2C Address
+  yes  Setup                0x119   I2C Address
+  yes  Setup                0x11B   I2C Address
+  yes  Setup                0x11D   I2C Address
+  yes  Setup                0x11F   I2C Address
+  yes  Setup                0x121   I2C Address
+  yes  Setup                0x123   I2C Address
+  yes  Setup                0x125   I2C Address
+  yes  Setup                0x127   I2C Address
+  yes  Setup                0x129   I2C Address
+  yes  Setup                0x12B   I2C Address
+  yes  Setup                0x17F   I2C Address
+  yes  Setup                0x181   I2C Address
+  yes  Setup                0x183   I2C Address
+  yes  Setup                0x185   I2C Address
+  yes  Setup                0x187   I2C Address
+  yes  Setup                0x189   I2C Address
+  yes  Setup                0x18B   I2C Address
+  yes  Setup                0x18D   I2C Address
+  yes  Setup                0x18F   I2C Address
+  yes  Setup                0x191   I2C Address
+  yes  Setup                0x193   I2C Address
+  yes  Setup                0x195   I2C Address
+  yes  Setup                0x1E9   I2C Address
+  yes  Setup                0x1EB   I2C Address
+  yes  Setup                0x1ED   I2C Address
+  yes  Setup                0x1EF   I2C Address
+  yes  Setup                0x1F1   I2C Address
+  yes  Setup                0x1F3   I2C Address
+  yes  Setup                0x1F5   I2C Address
+  yes  Setup                0x1F7   I2C Address
+  yes  Setup                0x1F9   I2C Address
+  yes  Setup                0x1FB   I2C Address
+  yes  Setup                0x1FD   I2C Address
+  yes  Setup                0x1FF   I2C Address
+  yes  Setup                0x253   I2C Address
+  yes  Setup                0x255   I2C Address
+  yes  Setup                0x257   I2C Address
+  yes  Setup                0x259   I2C Address
+  yes  Setup                0x25B   I2C Address
+  yes  Setup                0x25D   I2C Address
+  yes  Setup                0x25F   I2C Address
+  yes  Setup                0x261   I2C Address
+  yes  Setup                0x263   I2C Address
+  yes  Setup                0x265   I2C Address
+  yes  Setup                0x267   I2C Address
+  yes  Setup                0x269   I2C Address
+  yes  Setup                0x77    I2C Address
+  yes  Setup                0x92    I2C Address
+  yes  Setup                0xAD    I2C Address
+  yes  Setup                0xC8    I2C Address
+
+--- Graphics / panel (8) ---
+  yes  SaSetup              0x104   Primary Display
+  yes  SaSetup              0x41    GTT Size
+  yes  SaSetup              0xDF    DVMT Pre-Allocated
+  yes  SaSetup              0xE0    DVMT Total Gfx Mem
+  yes  SaSetup              0x35    LCD Panel Type
+  yes  SaSetup              0x36    Panel Scaling
+  yes  SaSetup              0x38    Backlight Control
+  yes  SaSetup              0x40    Panel Color Depth
+
+--- Acoustics / slew (12) ---
+  yes  Setup                0x2CA   Active Trip Point 0 Fan Speed
+  yes  Setup                0x2C9   Active Trip Point 1 Fan Speed
+  yes  Setup                0x2DE   CPU Fan Speed
+  yes  Setup                0x304   FAN1 Device
+  yes  Setup                0x305   FAN2 Device
+  yes  CpuSetup             0x1CC   Acoustic Noise Mitigation
+  yes  CpuSetup             0x1D0   Slow Slew Rate for IA Domain
+  yes  CpuSetup             0x1D1   Slow Slew Rate for GT Domain
+  yes  CpuSetup             0x1D2   Slow Slew Rate for SA Domain
+  yes  SaSetup              0x13C   Write Slew Rate Training*
+  yes  SaSetup              0x14E   CMD Slew Rate Training
+  yes  Setup                0x7     CPU Fan Speed
+

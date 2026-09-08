@@ -1,0 +1,128 @@
+settings  hidden  form
+------------------------------------------------------------------------------
+     168     113  Link options
+     144     144  DPTF Configuration
+     128     120  Control Logic options
+      97      96  SATA And RST Configuration
+      79      77  Platform Settings
+      72      46  PEG Port Configuration
+      51      10  PCI Express Gen3 Eq Lanes
+      47      46  Thunderbolt(TM) Configuration
+      46      37  CPU - Power Management Control
+      41      40  Custom P-state Table
+      39      14  Memory Configuration
+      37       1  Memory Training Algorithms
+      36      35  PCI Express Root Port 1
+      36      35  PCI Express Root Port 2
+      36      35  PCI Express Root Port 3
+      36      35  PCI Express Root Port 4
+      36      35  PCI Express Root Port 5
+      36      35  PCI Express Root Port 6
+      36      35  PCI Express Root Port 7
+      36      35  PCI Express Root Port 8
+      36      35  PCI Express Root Port 9
+      36      35  PCI Express Root Port 10
+      36      35  PCI Express Root Port 11
+      36      35  PCI Express Root Port 12
+      36      35  PCI Express Root Port 13
+      36      35  PCI Express Root Port 14
+      36      35  PCI Express Root Port 15
+      36      35  PCI Express Root Port 16
+      36      35  PCI Express Root Port 17
+      36      35  PCI Express Root Port 18
+      36      35  PCI Express Root Port 19
+      36      35  PCI Express Root Port 20
+      36      35  PCI Express Root Port 21
+      36      35  PCI Express Root Port 22
+      36      35  PCI Express Root Port 23
+      36      35  PCI Express Root Port 24
+      34      13  PCH-IO Configuration
+      33      32  RTD3 settings
+      33      19  CPU Configuration
+      33       0  SkyCam Configuration
+      32       9  HD Audio DSP Features Configuration
+      30      10  Policy Configuration
+      30      27  USB Configuration
+      30      27  Pch Thermal Throttling Control
+      28      12  PEP Constraints Configuration
+      27      20  ACPI Settings
+      22       5  Platform Thermal Configuration
+      22      18  Memory Overclocking Menu
+      22      21  Dram Power Meter
+      21      10  Graphics Configuration
+      20       0   Gen3 Root Port Preset value for each Lane
+      20       0   Gen3 Endpoint Preset value for each Lane
+      20       0   Gen3 Endpoint Hint value for each Lane
+      20       0  Memory Thermal Reporting
+      19      14  SerialIo Configuration
+      17      16  System Agent VR Settings
+      17      16  Core/IA VR Settings
+      17      16  GT-UnSliced VR Settings
+      17      16  GT-Sliced VR Settings
+      17      16    Config TDP Configurations
+      16      15    View/Configure Turbo Options
+      16       0  Turn Around Timing
+      16      15  SerialIO timing parameters
+      16      16  ISH Configuration
+      16      16  Hardware Health Monitor
+      14      12  Software Feature Mask Configuration
+      14      11  Parallel Port Configuration
+      13       1  Cpu Thermal Configuration
+      12       4  GT
+      12       6  Platform Voltage Overrides
+      12       0  ME Debug Configuration
+      11       3  Processor
+      11       6  System Agent (SA) Configuration
+      11       0  Gen3 RxCTLE Control
+      11       2  Memory RAPL
+      10       9  Intel ICC
+      10      10  Realsense 3D Camera Settings
+      10       8  DMI/OPI Configuration
+      10       2  Memory Power and Thermal Throttling
+       9       2  PCI Express Configuration
+       9       6  Serial Port 0 Configuration
+       8       1  LCD Control
+       8       8  PCH-FW Configuration
+       7       6  Acoustic Noise Settings
+       7       5  Serial IO I2C1 Settings
+       6       4  Intel(R) Ultrabook Event Support
+       6       5  HD Audio Configuration
+       6       2  HD Audio Advanced Configuration
+       6       4  Serial IO I2C0 Settings
+       6       4  Serial Port 1 Configuration
+       5       5  CPU SMM Enhancement
+       5       0  CPU VR Settings
+       5       5  Power Limit 3 Settings
+       5       0  Voltage PLL Trim Controls
+       5       4  Memory Thermal Configuration
+       5       5  SCS Configuration
+       5       0  OEM Flags Settings
+       5       2  Floppy Disk Controller Configuration
+       4       0  Intel Advanced Menu
+       4       4  PCI Subsystem Settings
+       4       2  OverClocking Performance Menu
+       4       1  Serial IO UART0 Settings
+       4       2  ASF Configuration
+       3       3  Serial IO SPI1 Settings
+       3       0  TraceHub Configuration Menu
+       3       0  MEBx Resolution Settings
+       2       0    View/Configure CPU Lock Options
+       2       0  Uncore
+       2       1  GT - Power Management Control
+       2       1  Security Configuration
+       2       2  PTT Configuration
+       2       1  Firmware Update Configuration
+       2       0  AMT Configuration
+       2       1  CIRA Configuration
+       2       0  Secure Erase Configuration
+       1       0  Thunderbolt(TM) OS select
+       1       0  Serial IO I2C2 Settings
+       1       0  Serial IO I2C3 Settings
+       1       0  Serial IO I2C4 Settings
+       1       0  Serial IO I2C5 Settings
+       1       0  Serial IO SPI0 Settings
+       1       0  Serial IO UART1 Settings
+       1       0  Serial IO UART2 Settings
+       1       0  GPIO Configuration
+------------------------------------------------------------------------------
+    2809    2123  TOTAL across 124 forms
