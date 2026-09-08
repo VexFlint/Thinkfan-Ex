@@ -1,0 +1,16 @@
+# Lenovo's firmware image, everything unpacked from it, and the tools.
+# Large, and not ours to redistribute. README.md says how to regenerate all of
+# it from a single download; the digest is the part worth keeping in the repo.
+*.exe
+*.zip
+*.FL1
+*.FL2
+*.bin
+*.dump/
+*.report.txt
+*.ifr.txt
+extract/
+inno/
+ifrextractor
+uefiextract
+*.guids.csv

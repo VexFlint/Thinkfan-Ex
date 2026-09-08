@@ -1,0 +1,318 @@
+                                                                   Revision : 01
+--------------------------------------------------------------------------------
+Software name	        ThinkPad TBT3 Dock FW Update Tool
+
+Support model
+
+			ThinkPad X280
+			ThinkPad X1 Carbon 5th
+			ThinkPad X1 Carbon 6th
+			ThinkPad X1 Tablet Gen 3
+			ThinkPad X1 Yoga 2nd
+			ThinkPad X1 Yoga 3rd
+			ThinkPad Yoga 370
+			ThinkPad X380 Yoga
+			ThinkPad T470
+			ThinkPad T470s
+			ThinkPad T570
+			ThinkPad T480
+			ThinkPad T480s
+			ThinkPad T580
+			ThinkPad P51s
+			ThinkPad P52s
+			ThinkPad TBT3 Dock (MT: 40AC)
+
+                ThinkPad T15 Gen 1
+                ThinkPad T14 Gen 1
+                ThinkPad T14 Gen 1
+                ThinkPad X390 Yoga
+                ThinkPad T490
+                ThinkPad T590
+
+X13 Gen 1(#20T2,20T3)
+X1 Yoga 5th Gen(#20UB,20UC)
+X1 Carbon 8th Gen(#20U9,20UA)
+X1 Carbon 7th Gen(#20QD,20QE,20R1,20R2)
+X1 Yoga 4th Gen(#20QF,20QG,20SA,20SB)
+X390(#20Q0,20Q1,20SC,20SD)
+X280(#20KE,20KF)
+T14s Gen 1(#20T0,20T1)
+T490s(#20NX,20NY)
+ThinkPad 25(#20K7)
+P14s Gen 1(#20S4,20S5)
+P15s Gen 1(#20T4,20T5)
+
+X1 Yoga Gen 7(#21CD,21CE)
+X1 Carbon Gen 10(#21CB,21CC)
+X1 Yoga Gen 6(#20XY,20Y0)
+ThinkPad TBT3 Dock(40AC)
+
+Operating Systems
+Microsoft Windows 10 64-bit (1809 or later)
+Microsoft Windows 11 (21H2 or later)
+
+FW package:V1.0.25
+				Tool Version:V1.0.25
+				TBT FW: C44
+				PD FW: 1.38.07
+				DP hub: 3.13.005
+				Audio: 04-0E-87_Rev_0087
+
+
+Support device		ThinkPad TBT3 Dock
+
+--------------------------------------------------------------------------------
+WHAT THIS PACKAGE DOES
+
+  This package updates the firmware (ThinkPad TBT3 Dock) to update the
+  following chip of dock.
+
+  Chip                     	 Chip name in the Dock
+  ------------------------------------------------------------------------------
+  Intel TBT3                     JHL6540
+  Synaptics DP HUB               VMM3320
+  Fresco PCIE USB HUB            F1100EX
+  Conexant Audio                 CX20985B
+  SiliconLab MCU                 EFM8UB20F64G
+
+  Refer to marketing materials to find out what computer models support which dock.
+
+  If this package has been installed, this package will fix problems, add new functions, or expand functions as noted below.
+
+  This program is language independent and can be used with any language system.
+
+
+--------------------------------------------------------------------------------
+CHANGES IN THIS RELEASE
+
+FW package V1.0.25 (Fixed:)
+ Tool package V1.0.25
+ 1. TBT SDK 1.20 updated.
+
+[Important updates]
+  Nothing.
+
+[New functions or enhancements]
+  Nothing.
+
+[Problem fixes]
+  Nothing.
+
+--------------------------------------------------------------------------------
+DETERMINING WHICH VERSION IS INSTALLED
+
+In File Manager
+
+  1. Locate the file that was downloaded and double-click "Run_Check_Version.bat".
+  2. Batch file will return below return code:
+     0 : Ready to update.
+     1 : No need to update or dock was not ready/connected.
+
+--------------------------------------------------------------------------------
+NOTES
+
+  Nothing
+
+--------------------------------------------------------------------------------
+INSTALLATION INSTRUCTIONS
+
+Notes:
+- If your dock runs satisfactorily now, it may not be necessary to update
+  the software. To determine if you should update the software, refer to the
+  Version Information section.
+
+
+Manual Install
+
+  This section assumes to use Internet Explorer and Windows Explorer.
+
+  Download File
+  -------------
+  1. Click once on the underlined file name(ar_tbtdockfw10.exe). Once this is done, some pop-up windows will appear.
+  2. Follow the instructions on the screen.
+  3. Choose the folder you would like to download the file to and click Save.
+     A different window will appear and the download will begin and complete.
+     Once the download has completed, there may or may not be a message stating that the download completed successfully.
+  4. Make sure to be logged on with an administrator account.
+  5. Locate the folder where the file was downloaded.
+
+  Update Firmware
+  ---------------
+  Method 1:
+  (Install option)
+  1. For UI mode: Double-click ar_tbtdockfw10.exe .
+  2. Follow the instructions on the screen, choose "Install" and then press "Update" button to complete FW update.
+
+  Method 2:
+  (Extract only option)
+  1. For UI mode: Double-click ar_tbtdockfw10.exe .
+  2. Follow the instructions on the screen, choose "Extract only".
+  3. In the "Select Destination Location" window, click Extract. If you would like to select a different folder, click Browse.
+  4. In the Ready to Install window, click Install. All the necessary files will
+     be extracted to the folder you selected. (Default: C:\DRIVERS\Tbt3ArDockFwUpdateTool)
+  5. Locate to the extracted folder and double-click Fwupdate.exe and then press "Update" button to complete FW update.
+  6. For Silent Mode without prompt and force update: At the command line mode and execute [File extracted folder\]Fwupdate.exe /u /s /f
+
+  Method 3:
+  Unattended Install
+
+  This is for system administrators' use only.
+
+  1. Refer to the Manual Install section, and download and extract the 7z file.
+
+  2. For Silent Mode without prompt and force update: At the command line, execute ar_tbtdockfw10.exe /u /s /f /VERYSILENT .
+     Example: [Path where the 7z file was extracted\]ar_tbtdockfw10.exe /u /s /f /VERYSILENT
+
+--------------------------------------------------------------------------------
+UNINSTALLATION INSTRUCTIONS
+
+  Nothing
+
+--------------------------------------------------------------------------------
+VERSION INFORMATION
+
+  The following versions have been released to date.
+
+  Version                         Build ID       Rev.      Issue Date
+ ------------------------     --------------     ----      -----------
+ FW package V1.0.25          ar_tbtdockfw10               07/03/2022
+	Tool package V1.0.25
+	TBT FW: C44
+	PD FW: 1.38.07
+	DP hub: 3.13.005
+	Audio: 04-0E-87_Rev_0087
+
+ FW package V1.0.24          ar_tbtdockfw09               15/12/2021
+	Tool package V1.0.24
+	TBT FW: C44
+	PD FW: 1.38.07
+	DP hub: 3.13.005
+	Audio: 04-0E-87_Rev_0087
+
+ FW package V1.0.0.23        ar_tbtdockfw08               13/08/2020
+	Tool package V1.0.0.23
+	TBT FW: C44
+	PD FW: 1.38.07
+	DP hub: 3.13.005
+	Audio: 04-0E-87_Rev_0087
+
+ FW package V1.0.0.12        ar_tbtdockfw05               04/03/2019
+ 	Tool package V1.0.0.16
+	TBT FW: C33
+	PD FW: 1.38.01
+	DP hub: 3.12.005
+	Audio: 04-0E-80_Rev_0800
+
+ FW package V1.0.0.12        ar_tbtdockfw04               12/24/2018
+ 	Tool package V1.0.0.12
+	TBT FW: C33
+	PD FW: 1.38.01
+	DP hub: 3.12.005
+	Audio: 04-0E-80_Rev_0800
+	PCIE hub: 3.71
+
+
+ FW package V1.0.0.0         ar_tbtdockfw00               01/30/2017
+ 	Tool package V1.0.0.0
+	TBT FW: C15
+	PD FW: 1.31.01
+	DP hub: 3.12.000
+	Audio: 04-0E-80_Rev_2800
+	PCIE hub: 3.7
+	MCU: E123
+
+  Note: Revision number (Rev.) is for administrative purpose of this README
+        document and is not related to software version. There is no need to
+        upgrade this software when the revision number changes.
+
+  To check the version of firmware, refer to the Determining which version is
+  installed section.
+
+
+Summary of Changes
+------------------
+
+  Where: <   >        Package version number
+         [Important]  Important update
+         (New)        New function or enhancement
+         (Fix)        Correction to existing function
+
+--------------------------------------------------------------------------------
+<V1.0.25> (ar_tbtdockfw10)
+- (Fix)
+	1.TBT SDK 1.20 updated.(TBT_DCH_SW_Rev85)
+
+<V1.0.24> (ar_tbtdockfw09)  Revision : 02
+- (New)
+Add support model
+X1 Yoga Gen 7(#21CD,21CE)
+X1 Carbon Gen 10(#21CB,21CC)
+X1 Yoga Gen 6(#20XY,20Y0)
+ThinkPad TBT3 Dock(40AC)
+- (Fix)
+	1. TBT SDK 1.16 updated.
+	2. Shorten version numbers.
+
+<V1.0.0.23> (ar_tbtdockfw08)
+- (Fix)
+	1. New function added in ar_tbtdockfw08.exe, after extracting ar_tbtdockfw08.exe and then
+	execute "Fwupdate.exe /ShowVer" : For showing Dock and Package version.
+
+	2. TBT3/PD : Lenovo_ThinkPad_Thunderbolt3Dock_AR_EP_4C_C0_rev44_W_Ti_v138_SEC6_sign
+	a. Update TBT3 FW to C44.
+	b. Support downstream USB C port to DP dongle.
+
+	3. DP : leaf_firmware_tbt3_Ver3_13_005.eeprom
+	a. Avoid to write the GUID to non-MST capable sink even it marked as DP1.2 supported, some monitor scale chip would hang on GUID write.
+	b. Remove CDR reset during source set TP1, reset AEQ at each time source set swing/pre-emphasis value.
+	c. Add firmware configuration option that supporting new feature that switch to SST mode if MAC system is detected.
+
+<V1.0.0.12> (ar_tbtdockfw05)
+- (Fix)
+	1. Tool package version: V1.00.16
+	2. Modify the UI text description
+	3. Intel tool update
+	4. Fresco tool update
+
+
+<V1.0.0.12> (ar_tbtdockfw04)
+- (Fix) Update all firmwares on the TBT3 dock
+	1. 	Tool package version: V1.00.12
+	2.	TBT3/PD : Lenovo_ThinkPad_Thunderbolt3Dock_AR_EP_4C_C0_rev33_W_Ti_v138_SEC1_sign (Intel signed ver:5)
+		a. update TBT3 FW to C33
+		b. update PD FW to 1.38.01, and set Rp to default
+	3.	DP : leaf_firmware_tbt3_Ver3_12_005.eeprom
+		a. Change the PLL tuning mode from frame based to line based to speed up display time
+		b. Enhance the video compatibility with Dell 5K monitor
+		c. Change the EDID filter to avoid downgrade the 4K30Hz to 4K15Hz for 1lane only dongle
+		d. Reprogram the video path instead of downgrade the link rate if tx link training fail with downstream monitor
+		e. Change the SST input EDID generation method for MAC OS
+		f. Add HPD filter to ignore the HPD PULSE less then 3 seconds for the DP TX active dongle output if and only if hub is in output program processing
+	4.	AUDIO : Lenovo_Thunderbolt3_B0_Patch_04-0E-80_Rev_0800_NVM-.ptc
+		A.	Official firmware based on the latest
+	5.	HUB HOST : FL_XHCI_HOST_EEPROM_x17EF_x3067.bin(20180123)/FL_XHCI_HOST_EEPROM_x17EF_x3068_AllRemovable.bin(20180123)
+		Disable Compliance
+
+
+<V1.0.0.10> (ar_tbtdockfw00)
+- [Important] Mass production version
+	1. 	Tool package version: V1.00.10
+
+
+
+--------------------------------------------------------------------------------
+LIMITATIONS
+
+  Nothing
+
+
+--------------------------------------------------------------------------------
+TRADEMARKS
+
+* Lenovo and ThinkPad are registered trademarks of Lenovo.
+
+* Intel is a registered trademark of Intel Corporation.
+
+* Microsoft, Windows are registered trademarks of Microsoft Corporation.
+
+Other company, product, and service names may be registered trademarks,trademarks or service marks of others.
