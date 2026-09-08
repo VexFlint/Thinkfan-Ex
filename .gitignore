@@ -1,0 +1,13 @@
+# Vendor firmware downloads. Large, and not ours to redistribute -- the same
+# policy FIRMWARES/.gitignore already applies to the BIOS image.
+#
+# This directory also cannot coexist with FIRMWARES/ in a checkout on a
+# case-insensitive filesystem, so tracking it broke cloning on macOS and
+# Windows outright.
+#
+# Nothing committed depends on these. They were downloaded while checking the
+# Thunderbolt claim in MACHINE.md and were never used. To get them again:
+#   BIOS packages   https://download.lenovo.com/pccbbs/mobiles/n24uj<NN>w.exe
+#   BIOS readmes    https://download.lenovo.com/pccbbs/mobiles/n24ur<NN>w.html
+#   Dock firmware   https://support.lenovo.com  ->  ThinkPad Thunderbolt 3 Dock
+firmwares/
