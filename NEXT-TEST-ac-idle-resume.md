@@ -1,10 +1,11 @@
-# Next test: the two runs still owed on the resume revert
+# Next test: the one run still owed on the resume revert
 
 Rewritten 2026-09-08 after the AC-idle arm was run. The original question — does
 an AC idle resume revert? — is **answered**: it reverts MMIO PL1 and latches
 `odvp0`, but spares the TCC offset. See "The AC resume revert is partial" in
-FIRMWARE.md. Two runs are still owed, and both need `power-unlock` out of the
-suspend path, so do not restore it until you have decided against them.
+FIRMWARE.md. The kernel-restore question below has since been answered too. **One
+run is still owed**, it needs a reboot, and it needs `power-unlock` out of the
+suspend path.
 
 ## 1. Clean confirmation of the TCC hold — needs a reboot
 
@@ -27,18 +28,19 @@ Reboot, then hold **every** precondition below and use a **long** dwell.
 **Predicts TCC holds at 4.** A TCC of 30 would overturn the section instead, and
 would mean the dwell/latch pair was hiding something after all.
 
-## 2. Is the kernel what restores MMIO PL1? — any arm, no reboot needed
+## 2. ~~Is the kernel what restores MMIO PL1?~~ ANSWERED 2026-09-08
 
-Still inference by elimination. Set a **distinctive** PL1 (19000000), suspend,
-resume. 19 W back means the kernel is restoring its cached constraint; 22 W means
-a writer was missed. Do not combine this with run 1 above — a non-standard PL1
-would confound the TCC comparison.
+Run and confirmed: **yes, and it replays a cache.** MMIO PL1 was set to a
+distinctive 19000000, `power-unlock` taken out of the suspend path, AC, idle,
+14m41s deep suspend. Firmware reverted it to 15 W and **19 W came back**, not the
+22 W the config holds. See "Confirmed by measurement" in FIRMWARE.md.
 
 ## A second battery resume would also be worth having
 
-The asymmetry rests on two AC captures against **one** battery capture with a
-per-row TCC reading. A second battery idle resume, repairer removed, would move
-"battery takes TCC, AC does not" off n=1.
+The asymmetry rests on three AC captures — two run as TCC arms plus the 19 W PL1
+run, all with TCC untouched — against **one** battery capture with a per-row TCC
+reading. A second battery idle resume, repairer removed, would move "battery
+takes TCC, AC does not" off n=1 on the side that actually moves.
 
 ## The one step that needs a human
 
@@ -74,6 +76,16 @@ first post-resume sample and `SMI` from there on both lie across the boundary.
     sudo systemctl daemon-reload
     sudo /usr/local/sbin/thinkpad-power-unlock
     # verify TCC=4 and PL1=22000000
+
+`reenable` restores the unit to **all four** sleep targets (suspend, hibernate,
+hybrid-sleep, suspend-then-hibernate), while the removal step above takes it out
+of `suspend.target` only. So after a removal the other three still hold it: a
+plain `systemctl suspend` is unaffected, but a run that hibernates instead would
+have `power-unlock` write the config value and fake the result. Use `systemctl
+suspend` and check for `PM: suspend entry (deep)` in the journal.
+
+The final `thinkpad-power-unlock` call rewrites PL1 from the config, so it also
+undoes a distinctive-PL1 write; no separate undo is needed.
 
 Note: `/usr/local/sbin/thinkpad-power-unlock` is behind `power-unlock.sh` in this
 repo (an older comment block, no functional difference). Reinstall it from the
