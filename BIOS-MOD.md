@@ -5,7 +5,8 @@ a booted Linux, what the public research does and does not establish, and what i
 would cost to go further.
 
 **Nothing in this file has been written to the machine.** Every value below was
-read. The one write this repo has ever made to firmware settings went through
+read, including the firmware image, which was unpacked and decoded offline. The
+one write this repo has ever made to firmware settings went through
 `think-lmi`, is documented in [`FIRMWARE.md`](FIRMWARE.md), and is not what this
 file is about.
 
@@ -25,7 +26,8 @@ file is about.
 | [`LenovoHiddenSetting`](#lenovohiddensetting) | A named lead, and why it is not a recipe |
 | [What the public research establishes](#what-the-public-research-establishes) | And what it only claims |
 | [The two routes](#the-two-routes) | Writing the variable, or reflashing the image |
-| [The safe next step](#the-safe-next-step) | IFR extraction, which writes nothing |
+| [The IFR dump](#the-ifr-dump-done) | **Done.** What the firmware actually contains |
+| [What it found](#what-it-found) | The Intel Advanced Menu, with offsets |
 | [Is any of this worth wanting?](#is-any-of-this-worth-wanting) | The honest answer for this repo's purposes |
 
 ## The distinction that matters
@@ -97,11 +99,18 @@ show the Hidden Tabs."*
 the job: the UEFI image was beyond what they could disassemble, and the brick
 risk was not worth it. Nobody in it demonstrated the variable doing anything.
 
-So the honest statement: a variable with a promising name holds 34 zero bytes on
-this machine, which is consistent with a disabled bitfield and equally
-consistent with a vestigial store the firmware never reads. **Writing `0xFF`
-into it is a guess, not a procedure**, and it is a guess against the firmware
-that decides whether this laptop turns on.
+~~So the honest statement: a variable with a promising name holds 34 zero bytes
+on this machine, which is consistent with a disabled bitfield and equally
+consistent with a vestigial store the firmware never reads.~~
+
+**Settled by the IFR dump: it is not the gate.** `LenovoHiddenSetting` appears
+**nowhere** in the Setup module's forms — not as a varstore, not as a GUID, not
+once in 21 626 lines. Its GUID occurs only in `LenovoVariableInitDxe`,
+`SystemSmbiosLoaderDxe` and `EcIoDxe`, which initialise variables and have
+nothing to do with the setup browser. **Whatever this variable is for, it does
+not hide or reveal the menu**, and the E145 hypothesis does not carry to this
+model. Writing `0xFF` into it would have accomplished nothing, at the risk of
+the firmware that decides whether this laptop turns on.
 
 ## What the public research establishes
 
@@ -110,8 +119,8 @@ that decides whether this laptop turns on.
 | Hidden entries are suppressed in the IFR, values live in EFI variables | **Established.** This is how UEFI setup works, and the [UEFI Lessons material](https://github.com/Kostr/UEFI-Lessons/blob/master/Lessons_uncategorized/Lesson_Hidden_BIOS_settings) documents the mechanism directly |
 | Settings can be changed without flashing, by writing the variable | **Established** as a general technique — [bios-mods how-to](https://www.bios-mods.com/forum/Thread-HOW-TO-Change-hidden-BIOS-settings-without-unlock-request-and-without-flashing), [SlimIFR + UefiVarTool](https://github.com/GeographicCone/SlimIFR) |
 | A T480-specific guide exists for unlocking the hidden menu | **Dead link.** The widely-cited "Thinkpad T480 unlock BIOS hidden menu + modify whitelist + cfg lock" is hosted on `programming.vip`, which no longer resolves |
-| T480 CFG Lock sits at `VarOffset 0x3C`, `VarStore 0x3` | **Claimed, untested.** The [poster](https://github.com/taina0407/T480-OpenCore-Hackintosh/issues/4) says outright they had not tried it on their machine |
-| `LenovoHiddenSetting` unhides menus when its bits are set | **Hypothesis only.** No demonstration on any model |
+| T480 CFG Lock sits at `VarOffset 0x3C`, `VarStore 0x3` | **Confirmed** against this machine's own firmware — see below. The [poster](https://github.com/taina0407/T480-OpenCore-Hackintosh/issues/4) had not tested it; the IFR dump says they were right |
+| `LenovoHiddenSetting` unhides menus when its bits are set | **Refuted here.** The variable is referenced by no setup form in this firmware |
 | Some ThinkPads brick permanently from one UEFI setting | **Established, and does not apply here.** "Thunderbolt BIOS Assist" killed P52, P52s, P1, P72 and X1 Yoga 2018 boards. [The T480 has no Thunderbolt and is not affected](https://www.notebookcheck.net/Some-recent-ThinkPads-can-be-destroyed-by-changing-a-UEFI-BIOS-setting.346156.0.html) |
 
 The last row is the only piece of unambiguously good news: the specific landmine
@@ -131,23 +140,88 @@ Both failure modes end in the same place: needing hardware this machine does not
 have. That is the reason neither has been attempted here, and it is a better
 reason than squeamishness.
 
-## The safe next step
+## The IFR dump (done)
 
-Before writing anything, get the list. This writes nothing to the machine:
+Done on 2026-09-08, and it writes nothing to the machine. The vendor ships the
+firmware image; everything after that is offline analysis.
 
-1. Download Lenovo's T480 BIOS update package and extract the firmware image
-   from it. No hardware, no flashing — the vendor ships the image.
-2. Open it in **UEFITool**, find and extract the Setup module.
-3. Run **IFRExtractor** over it, and **SlimIFR** to make the dump readable.
-4. Read the result: every setting the firmware knows about, its variable, its
-   offset, its possible values, and whether it is suppressed.
+The package had to match the *running* firmware, because IFR offsets are
+version-specific. `dmidecode` reports `N24ET79W (1.54)`, and Lenovo's readmes
+map build numbers to versions:
 
-That converts the whole question from forum hypotheses into a list — and
-critically, it produces **this machine's own offsets** rather than a stranger's.
-The difference between a safe write and a brick is usually exactly that.
+| package | BIOS version |
+|---|---|
+| `n24uj40w.exe` | 1.53 |
+| **`n24uj41w.exe`** | **1.54 — the match** |
+| `n24uj42w.exe` | 1.55 |
+| `n24uj43w.exe` | 1.56 |
 
-The offsets are firmware-version-specific. A number that worked for someone
-else's T480 on a different BIOS revision is not a number, it is a coin flip.
+`innoextract` unpacks it to `N24ET79W/$0AN2400.FL1` — 9,455,008 bytes, and the
+directory name is the BIOS ID itself. `uefiextract` unpacks that to 8,733 files,
+and the module list names a DXE driver called plainly **`Setup`**
+(`E6A7A1CE-5881-4B49-80BE-69C91811685C`, 552 KB). `ifrextractor` turns its forms
+into 21,626 readable lines.
+
+Reproduction steps are in [`FIRMWARES/README.md`](FIRMWARES/README.md); the
+curated result is [`FIRMWARES/advanced-menu-digest.txt`](FIRMWARES/advanced-menu-digest.txt).
+
+**The offsets are trustworthy, and that is checked rather than assumed.** The
+IFR declares each varstore's size, and those match the live EFI variables on
+this machine exactly:
+
+| varstore | IFR declares | live variable |
+|---|---|---|
+| `Setup` | `0x5EB` = 1515 | **1515 B** |
+| `CpuSetup` | `0x306` = 774 | **774 B** |
+| `SetupCpuFeatures` | `0x29` = 41 | **41 B** |
+
+Three for three. This is the right firmware for this machine.
+
+## What it found
+
+**The formset is titled "Intel Advanced Menu".** It is the Intel reference
+setup, compiled into the shipping firmware, carrying **1,727 `OneOf` and 1,147
+`Numeric` settings across 146 forms** — with **791 `SuppressIf` blocks** doing
+the hiding. Lenovo's own menu (`LenovoSetupMainDxe` and friends) is a separate,
+much smaller UI that never offers a path to it.
+
+The settings this repo has spent the week reaching through MSRs are all in
+there, by name:
+
+| setting | varstore | offset | live value |
+|---|---|---|---|
+| **Voltage Offset** (IA Core) | `CpuSetup` | `0x1B2`, 16-bit | **0** |
+| Offset Prefix (sign) | `CpuSetup` | `0x1B4` | 0 |
+| Voltage Mode (adaptive/override) | `CpuSetup` | `0x1AF` | 0 |
+| **CFG Lock** | `CpuSetup` | `0x3C` | **1** (locked) |
+| **Overclocking Lock** | `CpuSetup` | `0xEB` | **0** (unlocked) |
+| Tcc Activation Offset | `CpuSetup` | `0x7B` | — |
+| Power Limit 1 / Override | `CpuSetup` | `0x10` / `0x14` | — |
+| Uncore Voltage Offset | `SaSetup` | `0x1AC` | — |
+| GT Voltage Offset | `SaSetup` | `0x1B4` | — |
+| Disable PROCHOT# Output | `CpuSetup` | `0x77` | — |
+
+The help text on the voltage entries is the punchline:
+
+> *"Specifies the Offset Voltage applied to the IA Core domain. This voltage is
+> specified in millivolts. **Uses Mailbox MSR 0x150, cmd 0x11.** Range −500 to
+> 500 mV"*
+
+**That is the same mailbox, the same command, that `uvsoak` and
+`intel-undervolt` drive.** The firmware has a full UI for the exact mechanism
+this repo qualified from Linux — it is simply never drawn.
+
+Two useful corroborations fell out. The community's untested claim that T480 CFG
+Lock lives at `VarOffset 0x3C` in varstore `0x3` is **correct** — varstore `0x3`
+is `CpuSetup`, and the live byte reads `1`, exactly as a locked machine should.
+And every value read back is coherent with a stock machine: offsets zero, CFG
+Lock set, OC Lock clear.
+
+> **What this does *not* establish** is that writing those bytes does anything.
+> The forms exist; whether Lenovo's build actually runs the Intel reference code
+> that consumes them at boot is untested and untestable without writing. A
+> populated form is evidence the setting was compiled in, not evidence it is
+> wired up.
 
 ## Is any of this worth wanting?
 
@@ -165,7 +239,30 @@ plainly.**
   *Mode for Battery* submenu that `think-lmi` does not carry — is already
   visible in the ordinary setup menu, and was set by hand there.
 
-So the state of play is: the door is identifiable, the lock is understood in
+~~So the state of play is: the door is identifiable, the lock is understood in
 general, no one has published a key for this model, and nothing this repo wants
-is on the other side. That may change if the IFR dump turns up something real.
-Until it does, this file is research, not a procedure.
+is on the other side. That may change if the IFR dump turns up something real.~~
+
+**The dump did turn up something real, and the answer stays no — for a better
+reason.** It is no longer "there is probably nothing behind the door". There is:
+a full Intel Advanced Menu with a voltage-offset control that drives the very
+mailbox this repo spent the week qualifying. The reason not to go through the
+door is that **we are already on the other side of it, by a route that reverses
+itself.**
+
+| | firmware variable | `MSR 0x150` from Linux |
+|---|---|---|
+| reaches the same mailbox | yes | yes |
+| effect of a wrong value | may not POST | reboot clears it |
+| recovery needs | an external SPI programmer | patience |
+| already validated here | no | **179 660 verified answers** |
+
+An undervolt written into `CpuSetup` would survive suspend without a re-apply
+unit, which is the single thing it would buy over `intel-undervolt`. That is not
+worth trading a reversible mistake for an unrecoverable one, on a machine with
+no programmer in the drawer.
+
+So this file stays what it has been: **research, not a procedure.** It now knows
+considerably more — the menu is real, the offsets are verified against this
+firmware, one community claim is confirmed and one is refuted — and it still
+ends in the same place, which is that nothing here needs writing.
