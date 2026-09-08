@@ -967,10 +967,53 @@ unmanaged undervolt is **not persistent in any sense** — every suspend discard
 it, so anyone measuring after a lid close without a re-apply unit is measuring a
 stock machine and may not know it.
 
+### `uv-resume-probe` — proving that, and keeping it honest
+
+The probe that established the above is in this repo. It is a **diagnostic, not
+a requirement**: the undervolt works without it. Install it if you want the
+evidence rather than the claim.
+
+```bash
+sudo install -m 755 uv-resume-probe.py /usr/local/sbin/uv-resume-probe
+sudo install -m 644 uv-resume-probe.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable uv-resume-probe.service
+```
+
+It appends one line per resume to `/var/log/uvsoak/resume-probe.log`:
+
+```
+14:11:57 pre-reapply core=+0.00  ... suspend=real    slept=80s stats=+1s/+0f
+14:08:27 pre-reapply core=-99.61 ... suspend=aborted slept=0s  stats=+0s/+1f failed=suspend:0000:01:00.0:-5
+```
+
+> [!IMPORTANT]
+> The reading is only meaningful because the unit is ordered
+> `Before=intel-undervolt.service`. Move it, drop that line, or read the mailbox
+> by hand after a lid close, and you are looking at the re-applied value —
+> which is identical to a surviving one and answers a different question.
+
+The `suspend=` tag exists because **an aborted suspend fires `suspend.target`
+too**, so the probe runs on a machine that never lost power to the core rail and
+records the offset still in place. Two such rows are in this machine's log, from
+a stale NVMe blocking suspend with `-16`, and they read exactly like the offset
+surviving S3. The tag comes from the kernel's own
+`/sys/power/suspend_stats` counters; `slept=` is the `BOOTTIME − MONOTONIC`
+growth, recorded as an independent witness and deliberately *not* folded into
+the tag, so a disagreement stays visible in the log instead of being resolved
+inside the script.
+
+> [!WARNING]
+> **Do not test this with `rtcwake`.** It writes `/sys/power/state` directly, so
+> logind is bypassed, `suspend.target` never fires, and none of the re-apply
+> units run — including this probe. On a machine with an NVIDIA dGPU it fails
+> outright; if it succeeds, you resume at stock voltage with nothing to say so.
+> Use `systemctl suspend`.
+
 ### Removing it
 
 ```bash
-sudo systemctl disable --now intel-undervolt.service
+sudo systemctl disable --now intel-undervolt.service uv-resume-probe.service
 sudo reboot
 ```
 
@@ -1073,10 +1116,35 @@ sudo rm -f /etc/thinkpad-power-unlock.conf
 
 ## Changelog
 
-### Unreleased
+### 1.4
+
+**Fixed**
+
+- **`firmwares/` is no longer tracked.** 94 MB of Lenovo BIOS and dock updater
+  binaries had been committed — against the policy `FIRMWARES/.gitignore`
+  already stated for the same class of file, and, because the two directories
+  differ only in case, **the repo could not be checked out at all on a
+  case-insensitive filesystem**. Nothing committed depended on them.
+  `.gitignore` says where to download them again. *They remain in git history;
+  clone size is unchanged until that is rewritten.*
+- **`v1.3.1`'s source tarball was missing `power-unlock.sh`**, so installing
+  from a release silently skipped `thinkpad-power-unlock` and produced a
+  fan-daemon-only install. Fixed by this release carrying the full tree.
 
 **Added**
 
+- `uv-resume-probe.py` and `uv-resume-probe.service` — the probe that measures
+  what suspend does to the voltage-offset mailbox, ordered ahead of the
+  re-apply so *survived* and *was restored* can be told apart. It tags each row
+  `real` or `aborted`, because a failed suspend fires `suspend.target` too and
+  otherwise logs a row that reads exactly like the offset surviving S3. See
+  [Undervolting](#undervolting).
+- [`MACHINE.md`](MACHINE.md) — every fact read off the test machine with the
+  command beside it, opening with the settings that can destroy the board and
+  closing with a table of this repo's own corrections.
+- [`FIRMWARE.md`](FIRMWARE.md) — the full undervolt and power-limit
+  investigation: the shared core/cache rail, what −100 mV bought on AC and on
+  battery, the −140 mV hang, and the −120 mV artifact that never reproduced.
 - `uvsoak.sh` — a soak harness that verifies *answers* rather than uptime, for
   qualifying a CPU voltage offset. Four concurrent known-answer workloads
   (SHA-256 chain, 2048-bit modular exponentiation, AVX2 matmul, and a 64 MB DRAM
