@@ -1125,8 +1125,10 @@ sudo rm -f /etc/thinkpad-power-unlock.conf
   already stated for the same class of file, and, because the two directories
   differ only in case, **the repo could not be checked out at all on a
   case-insensitive filesystem**. Nothing committed depended on them.
-  `.gitignore` says where to download them again. *They remain in git history;
-  clone size is unchanged until that is rewritten.*
+  `.gitignore` says where to download them again. History was then rewritten to
+  purge them entirely, so **a fresh clone is 424 KB rather than 83 MB**. Every
+  commit hash before this release changed as a result; the file tree at each
+  release tag did not.
 - **`v1.3.1`'s source tarball was missing `power-unlock.sh`**, so installing
   from a release silently skipped `thinkpad-power-unlock` and produced a
   fan-daemon-only install. Fixed by this release carrying the full tree.
