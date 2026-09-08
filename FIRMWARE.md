@@ -1081,13 +1081,97 @@ This also sits alongside the claw-back already documented above: on the same
 resume, `thinkpad-power-unlock` restored TCC 4 and MMIO PL1 22 W. Resume resets
 more than one thing on this machine, and each one needs its own hook.
 
+A later run put a lower bound on how long the suspend has to be. A deliberate
+short S3 — down at 13:58:10, up at 13:58:27, of which **11.9 seconds was
+actually spent suspended** — came back at `+0.00` just like the multi-hour ones.
+**The wipe is not a slow drain; it is immediate.** There is no "short nap" case
+where the offset would have held.
+
+> [!WARNING]
+> **A suspend that aborts still writes a row to this log, and the row looks like
+> good news.** The probe is `WantedBy=suspend.target`, and a failed suspend fires
+> that target as surely as a successful one — so the machine wakes without ever
+> having lost power to the core rail, and the probe faithfully records the offset
+> still in place:
+>
+> ```
+> 13:16:42 pre-reapply core=-99.61 cache=-99.61      # suspend ABORTED, not survival
+> 13:41:27 pre-reapply core=-99.61 cache=-99.61      # suspend ABORTED, not survival
+> ```
+>
+> Those two rows are real, and they are in this machine's log — written while a
+> stale `nvme0` was refusing to suspend with `-16` (see
+> [`MACHINE.md`](MACHINE.md#a-removed-nvme-leaves-a-stale-device-that-blocks-suspend--cleared)).
+> Read alone they refute the finding this whole section establishes. **Pair every
+> row with the kernel's own verdict before believing it:**
+>
+> ```bash
+> journalctl -b -k | grep -E 'PM: suspend (entry|exit)|failed to suspend'
+> ```
+>
+> A trustworthy row has a `PM: suspend exit` with no `PM: Some devices failed to
+> suspend` before it. Anything else measured nothing.
+
+#### The probe now tags its own rows
+
+Rather than leave that check to whoever reads the log next, the probe asks the
+kernel directly. `/sys/power/suspend_stats/{success,fail}` are counters, so a
+run that diffs them against the previous run knows what the resume it is
+recording actually was:
+
+```
+14:11:57  core=+0.00   ... suspend=real    slept=80s  stats=+1s/+0f
+14:08:27  core=-99.61  ... suspend=aborted slept=0s   stats=+0s/+1f failed=suspend:0000:01:00.0:-5
+```
+
+Both of those are real rows from this machine, not illustrations, and they are
+the two cases the log previously could not tell apart. Note that the second one
+carries the identical plane readings to a surviving offset — `-99.61` on core
+and cache — and is now unmistakable anyway.
+
+Three details are load-bearing:
+
+- **The baseline resets on `boot_id`, not on counter magnitude.** The counters
+  restart at zero every boot, so "current is lower than stored" looks like the
+  obvious reset trigger — and it silently fails for a boot whose counters land
+  on the same values as the stored ones, tagging a genuine S3 `unknown`.
+  `/proc/sys/kernel/random/boot_id` is the actual discriminator.
+- **`slept=` is recorded but is not an input to the tag.** It is the growth in
+  `CLOCK_BOOTTIME` − `CLOCK_MONOTONIC`, which is exactly the time spent
+  suspended and nothing else — an independent witness. Folding it into the tag
+  would let this script quietly resolve a disagreement between two sources. Left
+  separate, `suspend=real slept=0s` is a visible contradiction in the log, which
+  is the property the log exists for.
+- **A row is always written, even when something throws.** The tagging is in a
+  `try`, and a failure still emits the row as `suspend=unknown reason=...`. A
+  missing row and a suspend that never happened look identical from the outside;
+  a row that admits it does not know does not.
+
+Both paths are tested through the real resume chain. The `real` row above is a
+84-second `systemctl suspend` on 2026-09-08 — entry 14:10:32, exit 14:11:56, of
+which 80 s was spent suspended — that came back at `+0.00`, was re-applied to
+`-99.61` by `intel-undervolt.service` a moment later, and had both witnesses
+agree.
+
+The `aborted` path is tested against a real failure, not a simulated one: an
+`rtcwake` attempt was refused by the NVIDIA driver with `-5`, and the probe
+named the device out of `last_failed_dev` unprompted. That test also produced
+its own finding, filed under
+[Hazards](MACHINE.md#rtcwake-and-direct-syspowerstate-writes-skip-every-sleep-hook):
+**`rtcwake` writes `/sys/power/state` directly, so `suspend.target` never fires
+and none of the re-apply units run.** Had that suspend succeeded, the machine
+would have resumed at stock voltage with nothing to say so — and no probe row
+either, because the probe is one of the units it skips.
+
 ### What is installed, and how to remove it
 
 | piece | role |
 |---|---|
 | `/etc/intel-undervolt.conf` | −100 mV on planes 0 and 2, with the evidence and the shared-rail warning in the comments |
 | `intel-undervolt.service` | applies at boot and on resume — the same shape as `thinkpad-power-unlock.service` |
-| `uv-resume-probe.service` | records the pre-re-apply readback on every resume, to `/var/log/uvsoak/resume-probe.log` |
+| `uv-resume-probe.service` | records the pre-re-apply readback on every resume, to `/var/log/uvsoak/resume-probe.log`, tagged `real` or `aborted` |
+| `uv-resume-probe.py` | the probe's source, in this repo; installs to `/usr/local/sbin/uv-resume-probe` |
+| `/var/log/uvsoak/resume-probe.state` | the probe's counter baseline — delete it and the next row tags `real` off a zero baseline, which is harmless |
 
 `intel-undervolt-loop.service` — the daemon that re-applies every five seconds —
 is deliberately **not** enabled. Nothing needs it, and it would poll the mailbox
