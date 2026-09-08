@@ -1120,9 +1120,14 @@ run that diffs them against the previous run knows what the resume it is
 recording actually was:
 
 ```
-core=+0.00   ... suspend=real    slept=11s  stats=+1s/+0f
-core=-99.61  ... suspend=aborted slept=0s   stats=+0s/+1f failed=suspend:0000:01:00.0:-5
+14:11:57  core=+0.00   ... suspend=real    slept=80s  stats=+1s/+0f
+14:08:27  core=-99.61  ... suspend=aborted slept=0s   stats=+0s/+1f failed=suspend:0000:01:00.0:-5
 ```
+
+Both of those are real rows from this machine, not illustrations, and they are
+the two cases the log previously could not tell apart. Note that the second one
+carries the identical plane readings to a surviving offset — `-99.61` on core
+and cache — and is now unmistakable anyway.
 
 Three details are load-bearing:
 
@@ -1141,6 +1146,12 @@ Three details are load-bearing:
   `try`, and a failure still emits the row as `suspend=unknown reason=...`. A
   missing row and a suspend that never happened look identical from the outside;
   a row that admits it does not know does not.
+
+Both paths are tested through the real resume chain. The `real` row above is a
+84-second `systemctl suspend` on 2026-09-08 — entry 14:10:32, exit 14:11:56, of
+which 80 s was spent suspended — that came back at `+0.00`, was re-applied to
+`-99.61` by `intel-undervolt.service` a moment later, and had both witnesses
+agree.
 
 The `aborted` path is tested against a real failure, not a simulated one: an
 `rtcwake` attempt was refused by the NVIDIA driver with `-5`, and the probe
