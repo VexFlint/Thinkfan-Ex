@@ -1153,6 +1153,9 @@ construction, and it remains the most likely home of the claw-back.
 18 ACPI-WMI devices are listed by GUID only; their methods are unenumerated.
 158 EFI variables are listed by name only, 21 of them Lenovo/Setup namespaces
 (`CpuSetup`, `LenovoHiddenSetting`, `LenovoConfig`, `LenovoFunctionConfig`).
+Several have since been read — sizes, attributes and the fact that all of them
+carry runtime access — in [`BIOS-MOD.md`](BIOS-MOD.md), along with what the
+public research on unlocking them does and does not establish.
 
 ## Before you write anything
 
