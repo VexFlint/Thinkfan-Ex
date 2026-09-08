@@ -586,7 +586,8 @@ userspace writer did it: the journal shows only `uv-resume-probe` (read-only) an
 did not run, the watch unit was disabled, and `thinkfan-ex` contains no reference
 to either register.
 
-The agent is almost certainly the kernel. `intel_rapl_common` exports
+The agent is the kernel — argued here from the module graph, confirmed by
+measurement below. `intel_rapl_common` exports
 `rapl_pm_notifier` and `rapl_pm_callback`, and the MMIO domain is registered on
 top of that same module — `intel_rapl_common` is held by `intel_rapl_msr` and
 `processor_thermal_rapl`, and it is the latter that backs `intel-rapl-mmio` here —
@@ -594,13 +595,32 @@ so a `PM_POST_SUSPEND` notifier re-applying cached constraints would reach it.
 The TCC offset has no such driver-side cache, which is consistent with it staying
 where firmware left it.
 
-**This much is inference by elimination, not measurement.** What is measured is
-that PL1 returned to its pre-suspend value 2 s after resume with every known
-userspace writer accounted for. The confirming test is cheap and has not been
-run: write a *distinctive* MMIO PL1 (19 W, say), take `power-unlock` out of
-`suspend.target.wants` again, suspend, and see which value comes back. 19 W means
-the kernel is restoring its cached constraint; 22 W would mean some
-config-driven writer is doing it and was missed.
+**Confirmed by measurement 2026-09-08 — it is the kernel, replaying a cache.**
+This was inference by elimination when first written; the distinctive-value test
+it called for has since been run. MMIO PL1 was set to **19000000** — a value that
+appears in no config on this machine — with `power-unlock` out of
+`suspend.target.wants`, AC, idle, TCC 4, witnessed at 1 Hz across a 14m41s deep
+suspend.
+
+```
+   t   PkgW  MHz   C  TCC   mmioPL1  msrPL1  SMI  cThr  limiter
+  122   4.11 2299  45   4    19.00   25.00    0     0  -
+  127 51240.17 3429  41   4    15.00   25.00    0     0  PL2
+### t=127s  pl1: 19000000  ->  15000000
+  128  18.25 3901  44   4    19.00   25.00    0     0  turbo-atten
+### t=128s  pl1: 15000000  ->  19000000
+```
+
+**19 W came back, not 22 W.** Firmware reverted to its 15 W default and the
+restorer put back the *cached pre-suspend value*, not the 22 W that
+`/etc/thinkpad-power-unlock.conf` holds. A config-driven writer would have
+written 22 W; nothing did. `thinkpad-power-unlock` logged nothing at this resume,
+confirming it did not run. That is the `intel_rapl_common` PM notifier re-applying
+cached constraints, as argued above, and it is now measured rather than inferred.
+
+The practical consequence stands and is sharpened: **sysfs cannot tell you
+whether MMIO PL1 was reverted at resume**, because the kernel will have replayed
+whatever you last wrote, ~1 s later, whatever firmware did in between.
 
 Two consequences. **Firmware reverts both registers at resume**, symmetrically,
 and the asymmetric end state is Linux's doing rather than a firmware quirk. And
@@ -681,7 +701,10 @@ objection with a matched dwell. Run 2 also shows firmware reverting PL1 *with*
 mechanism — for it to explain the TCC hold it would have to suppress the TCC
 write selectively while leaving the PL1 write intact, which nothing in this
 record proposes. **Still owed: one reboot, then AC with a long dwell, which
-predicts TCC holds at 4.**
+predicts TCC holds at 4.** (A third AC idle resume — the 19 W PL1 test below —
+also held TCC at 4 across a 14m41s suspend, on the same spent `odvp0` latch. It
+was not run as a TCC arm and its PL1 was non-standard, so it does not replace the
+clean run, but it is a third AC idle resume in a row with TCC untouched.)
 
 **The battery arm is n=1.** This asymmetry rests on two AC observations against a
 single battery capture with a per-row TCC reading. The base-rate problem recorded
