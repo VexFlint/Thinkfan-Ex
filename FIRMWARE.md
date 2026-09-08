@@ -584,10 +584,23 @@ revert.** PL1 returns to 22000000 two seconds later while TCC stays at 30. No
 userspace writer did it: the journal shows only `uv-resume-probe` (read-only) and
 `intel-undervolt` (mV only) running at resume, `thinkpad-power-unlock` provably
 did not run, the watch unit was disabled, and `thinkfan-ex` contains no reference
-to either register. The agent is the kernel — `intel_rapl_common` exports
-`rapl_pm_notifier` and `rapl_pm_callback`, and the powercap layer re-applies the
-constraint it has cached for the MMIO domain after `PM_POST_SUSPEND`. The TCC
-offset has no such driver-side cache, so it stays where firmware left it.
+to either register.
+
+The agent is almost certainly the kernel. `intel_rapl_common` exports
+`rapl_pm_notifier` and `rapl_pm_callback`, and the MMIO domain is registered on
+top of that same module — `intel_rapl_common` is held by `intel_rapl_msr` and
+`processor_thermal_rapl`, and it is the latter that backs `intel-rapl-mmio` here —
+so a `PM_POST_SUSPEND` notifier re-applying cached constraints would reach it.
+The TCC offset has no such driver-side cache, which is consistent with it staying
+where firmware left it.
+
+**This much is inference by elimination, not measurement.** What is measured is
+that PL1 returned to its pre-suspend value 2 s after resume with every known
+userspace writer accounted for. The confirming test is cheap and has not been
+run: write a *distinctive* MMIO PL1 (19 W, say), take `power-unlock` out of
+`suspend.target.wants` again, suspend, and see which value comes back. 19 W means
+the kernel is restoring its cached constraint; 22 W would mean some
+config-driven writer is doing it and was missed.
 
 Two consequences. **Firmware reverts both registers at resume**, symmetrically,
 and the asymmetric end state is Linux's doing rather than a firmware quirk. And
@@ -612,6 +625,11 @@ capture is for, are unaffected.
 Left standing afterwards for the record: `coreThr` 10 and `pkgThr` 40 accumulated
 while TCC sat at 30, which is the reverted offset throttling at 70 C exactly as it
 says it should.
+
+One controlled pair is still missing. Both resume reverts on record — this one and
+the unattended one above — were idle **and** drawing from the pack, so "resume
+reverts" currently rests on two events sharing a power state. No AC-idle resume
+has been tested with the repairer removed, and that run is now cheap.
 
 ### Eight cold-start trials on AC, none reverted (2026-09-08)
 
@@ -1523,6 +1541,13 @@ uniformly risky, and the difference is worth keeping straight:
 
 The ordering that keeps a mistake cheap: read, document, change one thing,
 observe, reboot to confirm it resets, and only then automate it.
+
+**One instrument costs a reboot per use.** `odvp0` is a one-way latch: anything
+that invokes `DYTC` sets it to 7 and only a reboot clears it. That includes
+forcing DPTF *and* the wild claw-back itself, so a hunt that needs odvp0 must
+budget one fresh boot per attempt and confirm `odvp0 = 0` before arming. It reads
+7 on this machine from the resume capture of 2026-09-08 and will until the next
+boot. Question 2 being answered does not make the witness reusable within a boot.
 
 ## Open questions
 
