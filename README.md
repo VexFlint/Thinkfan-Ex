@@ -663,7 +663,9 @@ boot:
   i7-8650U ships offset 30: it throttles at 70C on a chip rated to 100C.
 - **PL1** — sustained package power. That same chassis ships 15 W against an MSR
   copy already set to 25 W. The hardware enforces `min(MSR, MMIO)`, so only the
-  MMIO copy needs raising.
+  MMIO copy needs raising. That is measured, not assumed: steady state tracks the
+  MMIO copy at 12, 18 and 22 W while the MSR copy stays at 25 W. See "Which PL1
+  copy binds" in FIRMWARE.md, and `pl1probe.py` to re-run it.
 
 This is **opt-in and off by default**, because raising them makes the machine run
 hotter and the right values depend on your chassis and cooler:
@@ -1115,6 +1117,33 @@ sudo rm -f /etc/thinkpad-power-unlock.conf
 ```
 
 ## Changelog
+
+### Unreleased
+
+**Added**
+
+- `pl1probe.py` — drives MMIO PL1 to a requested value under full load and
+  samples package power against both limit copies, the TCC offset and
+  `MSR_PERF_LIMIT_REASONS`, so *which* limiter is active is read off the hardware
+  rather than inferred from watts. It re-applies anything the firmware claws back
+  mid-run and stamps the event, because a revert at t=8 s otherwise turns the
+  rest of a run into a different experiment without saying so. That path is
+  verified by injecting a fake claw-back — the firmware's own default values
+  written in by hand mid-run — rather than by waiting for a real one. Both
+  writes are restored on exit, Ctrl-C included.
+
+**Fixed**
+
+- **FIRMWARE.md said the package sustains 24.87 W with MMIO PL1 set to 22 W**,
+  which put `min(MSR, MMIO)` — and therefore `power-unlock`'s whole approach — in
+  doubt. It does not. PL1 is an average over a ~28 s window, so a run from idle
+  spends its first ~33 s at PL2 (29 W) and a 90 s mean reads high by
+  construction. A 300 s run reproduces the old number as a 90 s prefix mean
+  (24.61 W) and settles at 21.98 W. The claim stands; the measurement that
+  challenged it was too short.
+- **The 24.87 → 22.08 W decline in the −50 mV first attempt was attributed to
+  heat soak.** It is the PL1 average converging, and it terminates at the limit
+  itself. The conclusion that paragraph drew is unaffected.
 
 ### 1.4
 
