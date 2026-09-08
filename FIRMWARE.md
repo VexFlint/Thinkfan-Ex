@@ -635,6 +635,32 @@ the run — hence the negative `SMI` column, which is a delta against a
 pre-suspend baseline that no longer exists. Question 11 leans on this counter;
 that lean is valid within a boot and void across a sleep.
 
+**Refined 2026-09-08 across four resume captures — the post-resume count is not
+arbitrary, it is ~371 every time.** The `SMI` column is `count − count at run
+start`, so its sign says more about when the run was armed than about the sleep:
+
+| capture | count at run start | `SMI` at end | post-resume absolute |
+|---|---|---|---|
+| battery, idle | 3154 | −2769 | ~385 |
+| AC, idle (run 1) | 2923 | −2552 | ~371 |
+| AC, idle (run 2) | 373 | −2 | ~371 |
+| AC, 19 W PL1 | 371 | 0 | 371 |
+
+A run armed after a previous resume already starts near 371, so it shows a
+delta of 0 or −2 rather than a large negative — which is why "the delta goes
+negative" is a statement about the first capture of a boot, not about S3.
+
+The consistency is the interesting part: **every resume lands the counter at
+about the same value**, which reads as the resume path itself generating a
+repeatable burst of roughly 371 SMIs. The captures cannot separate "the counter
+resets to 0 and the resume path then issues ~371 SMIs" from "the counter comes
+back at ~371", since the first post-resume sample is already past both. Either
+way the *absolute* post-resume count is a stable, meaningful number even though
+the delta is not, and question 11 — whether the revert arrives through an SMI —
+should be asked against that absolute rather than abandoned at the sleep
+boundary. Worth chasing with a sample taken as early in the resume path as
+possible.
+
 Two instrument caveats this run exposed, both in `clawwatch.py`: the `PkgW` column
 is meaningless at the resume boundary (56981.38 W — the RAPL energy counter resets
 while `time.monotonic()` correctly excludes the suspended time, so the first
