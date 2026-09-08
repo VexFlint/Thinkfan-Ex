@@ -680,26 +680,30 @@ fires but spares the TCC offset.
 
 ### The AC resume revert is partial — PL1 moves, TCC does not (2026-09-08)
 
-The controlled pair the section above asked for. Run 1 was taken on a fresh boot
-with `odvp0` confirmed at 0; run 2 followed on the same boot. Both had the same
-repairers out of the way:
+The controlled pair the section above asked for, and the clean run it left owed.
+Runs 1 and 2 were taken on one boot — run 1 on a fresh `odvp0` of 0, run 2 on
+the latch run 1 spent. **Run 3 is the clean confirmation**: its own fresh boot,
+`odvp0` back at 0, every precondition held. All three had the same repairers out
+of the way:
 `thinkpad-power-unlock.service` removed from `suspend.target.wants` with the boot
 path intact and `daemon-reload` verified against the runtime graph, watch unit
 disabled, `intel-undervolt` carrying voltage offsets only and logging mV at
-resume, `uv-resume-probe` read-only. One unit ran at this resume that the list
-above does not mention — `nvidia-resume.service` — and neither it nor
+resume, `uv-resume-probe` read-only. One unit ran at each of these resumes that
+the list above does not mention — `nvidia-resume.service` — and neither it nor
 `nvidia-sleep.sh` references TCC, RAPL or powercap.
 
 Held identical to the battery arm except the power source: TCC 4, MMIO PL1 22 W,
-idle, `--no-load`, witnessed at 1 Hz across the transition. The battery arm ran
-with `BAT0` on `force-discharge`; these ran on `[auto]` with the pack full, so
-the machine was adapter-fed.
+idle, `--no-load`, witnessed at 1 Hz across the transition. Every run's
+`# start:` line records the same DPTF surface, `zone1=disabled uuid=INVALID`.
+The battery arm ran with `BAT0` on `force-discharge`; these ran on `[auto]` with
+the pack full, so the machine was adapter-fed.
 
 | arm | odvp0 at start | S3 dwell | TCC | mmio PL1 | odvp0 after |
 |---|---|---|---|---|---|
 | battery, idle | 0 | 12m15s | **4 → 30**, stays 30 | 22 → 15 → 22 | 7 |
 | AC, idle (run 1) | 0 | 8s | **4, never moved** | 22 → 15 → 22 | 7 |
 | AC, idle (run 2) | 7 | 8m27s | **4, never moved** | 22 → 15 → 22 | 7 |
+| AC, idle (run 3) | **0** | 7m45s | **4, never moved** | 22 → 15 → 22 | 7 |
 
 ```
    t   PkgW  MHz   C  TCC   mmioPL1  msrPL1  SMI  cThr  limiter
@@ -710,30 +714,54 @@ the machine was adapter-fed.
 ### t=408s  pl1: 15000000  ->  22000000
 ```
 
-**The revert fires on AC — it is not a null.** `odvp0` went 0 → 7 in run 1 and
-MMIO PL1 was caught at 15 W in both runs, so firmware acted at both resumes. What
-differs from battery is which registers it takes: the TCC offset stayed at 4 in
-every sample of both runs, start to end. **Power source is not on/off for the
-resume revert; it selects which registers claw back.**
+**The revert fires on AC — it is not a null.** `odvp0` went 0 → 7 in runs 1 and
+3, and MMIO PL1 was caught at 15 W in all three, so firmware acted at every
+resume. What differs from battery is which registers it takes: the TCC offset
+stayed at 4 in every sample of all three runs, start to end. **Power source is
+not on/off for the resume revert; it selects which registers claw back.**
 
-**Neither AC run is individually clean, but they fail in different ways.** Run 1
-had the required `odvp0 = 0` start and a dwell of only 8 s. Run 2 matched the
-battery arm's dwell but began with `odvp0` already latched at 7, spent by run 1 —
-the exact confound the precondition exists to prevent. The two defects do not
-overlap and neither plausibly produces a TCC hold by its own route: run 1 answers
-the dwell objection with a clean policy variable, and run 2 answers the policy
-objection with a matched dwell. Run 2 also shows firmware reverting PL1 *with*
-`odvp0` already at 7, so a latched policy variable does not gate the revert
-mechanism — for it to explain the TCC hold it would have to suppress the TCC
-write selectively while leaving the PL1 write intact, which nothing in this
-record proposes. **Still owed: one reboot, then AC with a long dwell, which
-predicts TCC holds at 4.** (A third AC idle resume — the 19 W PL1 test below —
-also held TCC at 4 across a 14m41s suspend, on the same spent `odvp0` latch. It
-was not run as a TCC arm and its PL1 was non-standard, so it does not replace the
-clean run, but it is a third AC idle resume in a row with TCC untouched.)
+**Neither of the first two runs was individually clean, but run 3 is.** Run 1 had
+the required `odvp0 = 0` start and a dwell of only 8 s. Run 2 matched the battery
+arm's dwell but began with `odvp0` already latched at 7, spent by run 1 — the
+exact confound the precondition exists to prevent. Run 3 carries neither defect:
+fresh boot, `odvp0 = 0` at entry, TCC 4 and MMIO PL1 22 W, AC online with `BAT0`
+on `[auto]`, watch unit inactive, and the repairer verified out of
+`suspend.target` in the runtime graph rather than only on disk. Firmware acted,
+and TCC did not move in any of the 293 rows:
 
-**The battery arm is n=1.** This asymmetry rests on two AC observations against a
-single battery capture with a per-row TCC reading. The base-rate problem recorded
+```
+### t=60s  pl1: 22000000  ->  15000000
+### t=60s  odvp: 0,0,0,... -> 7,0,0,...
+### t=61s  pl1: 15000000  ->  22000000
+# end: TCC=4 MMIO_PL1=22000000   odvp0..19 = 7,0,0,...
+```
+
+**The short dwell does not reopen the question.** Run 3 slept 7m45s — less than
+run 2, less than the battery arm — and dwell is exactly what retired run 1, so
+the objection deserves an answer rather than a footnote. It does not carry
+across.
+Run 1's defect was that 8 s might not have given firmware the chance to act at
+all, which is what made its TCC hold uninformative. Run 3 shows firmware acting:
+PL1 caught at 15 W and `odvp0` going 0 → 7, with TCC holding straight through it.
+Dwell adequacy here is established by the outcome, not by the clock. The long
+side is covered independently — the 19 W PL1 test below slept 14m41s, longer
+than the battery arm, and ended at TCC 4. That run is still **not** a TCC arm:
+non-standard PL1, `odvp0` already spent, and not run for this question, so it
+does not stand in for run 3. What it does is bound the range, leaving no
+untested band between 7m45s and 14m41s on AC in which a dwell-gated TCC revert
+could be hiding.
+
+Run 2 also shows firmware reverting PL1 *with* `odvp0` already at 7, so a latched
+policy variable does not gate the revert mechanism — for it to explain the TCC
+hold it would have to suppress the TCC write selectively while leaving the PL1
+write intact, which nothing in this record proposes.
+
+**What is still owed is a second battery resume, and it needs a reboot** — `odvp0`
+is spent at 7 on this boot.
+
+**The battery arm is n=1.** This asymmetry rests on four AC idle resumes — three
+run as TCC arms, plus the 19 W PL1 test — against a single battery capture with a
+per-row TCC reading. The base-rate problem recorded
 above — one revert in five comparable battery runs — is about the wild claw-back
 rather than resume, and every resume tested so far has reverted *something*, so
 the resume trigger looks reliable in a way the load trigger is not. But "battery
@@ -1701,7 +1729,8 @@ boot. Question 2 being answered does not make the witness reusable within a boot
    eight cold-start 120 s load runs from odvp0=0 all ended at odvp0=0, at up to
    33.6 W and 92 C. Firmware did invoke it **at resume**, where odvp0 went 0 → 7
    in the same sample as the register revert. So the answer is "not under load,
-   yes across a sleep", on one resume capture and eight load runs. What remains
+   yes across a sleep", on three resume captures that started from `odvp0 = 0`
+   (the battery arm, and AC runs 1 and 3) against eight load runs. What remains
    open is whether a load-triggered revert — the rarer event these eight did not
    catch — also moves it; odvp0 cannot be reused for that within this boot, since
    the latch is now spent until a reboot.
@@ -1730,10 +1759,12 @@ boot. Question 2 being answered does not make the witness reusable within a boot
    is now a reproduced trigger** — a controlled, idle, `--no-load` suspend with
    every repairer removed reverted both registers on the first post-resume
    sample (2026-09-08), the second resume revert on record and the first
-   instrumented one. Two AC resumes the same day fired as well but **partially**:
-   MMIO PL1 reverted and `odvp0` latched while the TCC offset held at 4, so
-   resume triggers on both power sources and the power source decides which
-   registers move. The cold-fan hypothesis should now be treated as dead
+   instrumented one. Three AC resumes fired as well but **partially**: MMIO PL1
+   reverted and `odvp0` latched while the TCC offset held at 4, so resume
+   triggers on both power sources and the power source decides which registers
+   move. The third of those is the clean arm — its own fresh boot, `odvp0 = 0` at
+   entry, every precondition held — so the partial-revert finding no longer rests
+   on two runs that were each defective in a different way. The cold-fan hypothesis should now be treated as dead
    rather than merely unreproduced: eight cold-start trials with the fan stopped
    at onset, at up to 33.6 W and 92 C — hotter and harder than the run that
    reverted — produced nothing. Battery state, temperature, peak power, fan
