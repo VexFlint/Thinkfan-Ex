@@ -123,6 +123,14 @@ $ lspci -nn | grep -i 15b7    # (no output)
 $ who -b                      # system boot  2026-09-08 13:45
 ```
 
+**Suspend was then re-tested and works**, 13:58:10 → 13:58:27, deep S3, no
+device failed and nothing needed a second attempt:
+
+```
+PM: suspend entry (deep)
+PM: suspend exit          # and no "Some devices failed to suspend" between them
+```
+
 > **Lesson one, on reading the logs.** Read cold and in the wrong direction,
 > these lines look exactly like a drive failing on its own, and this file
 > briefly said so. `dmesg -T` gave the wall-clock time and the owner gave the
@@ -141,6 +149,7 @@ $ who -b                      # system boot  2026-09-08 13:45
 > 2026-09-08 12:24:31  core=+0.00   cache=+0.00     <- real S3, 23h49m asleep
 > 2026-09-08 13:16:42  core=-99.61  cache=-99.61    <- suspend ABORTED by nvme
 > 2026-09-08 13:41:27  core=-99.61  cache=-99.61    <- suspend ABORTED by nvme
+> 2026-09-08 13:58:27  core=+0.00   cache=+0.00     <- real S3, 17s, post-fix control
 > ```
 >
 > They are not survival; they are a suspend that never happened. **Pair every
@@ -152,7 +161,11 @@ $ who -b                      # system boot  2026-09-08 13:45
 > ```
 >
 > The finding itself is unaffected — **suspend wipes the mailbox** still rests
-> on the `+0.00` rows from the three suspends that actually completed.
+> on the `+0.00` rows from every suspend that actually completed, including the
+> deliberate 17-second control run after the reboot. That last row is the useful
+> one: it shows the wipe does not need a long sleep. **17 seconds in S3 is
+> enough to clear the mailbox**, so the re-apply is not an optimisation for long
+> suspends, it is required for all of them.
 
 ### The two risk tiers this repo works in
 
