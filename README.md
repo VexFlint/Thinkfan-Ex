@@ -32,6 +32,7 @@ you want your own curve. This gives you one.
 | [Configuration](#configuration) | The curve, and the five knobs that shape it |
 | [Measuring your fan](#measuring-your-fan) | Finding your real RPM ladder before you tune |
 | [Power and charging](#power-and-charging) | `chargewatch`, USB-C PD, and where the watts go |
+| [Undervolting](#undervolting) | `uvsoak`, the validated offset, and how it was earned |
 | [Safety](#safety) · [Logging](#logging) · [Troubleshooting](#troubleshooting) | Operating it |
 | [Uninstallation](#uninstallation) · [Changelog](#changelog) | Removing it, and what changed |
 
@@ -853,6 +854,135 @@ chargers, missing UCSI, the capped ETA — is one command rather than an afterno
 with a charger. `-probe` is deliberately not covered, since it pegs every core;
 test that one by hand.
 
+## Undervolting
+
+Lowering the CPU's voltage at a given frequency. On a power-limited chassis that
+is close to free performance — the part spends the saved watts on clock — and on
+battery it turns into runtime instead. It is also the one thing in this repo that
+can corrupt data silently, so it is opt-in, unautomated by the installer, and
+documented here with the evidence rather than a recommendation.
+
+> [!CAUTION]
+> A bad undervolt does not announce itself. It hangs the machine if you are
+> lucky, and returns a wrong answer under a workload you did not test if you are
+> not. Nothing here should be applied to a machine holding work you have not
+> backed up, and no number below transfers to another laptop — silicon varies
+> part to part, and the same chip model will not take the same offset.
+
+### What it bought
+
+Measured on a T480 i7-8650U, MMIO PL1 22 W, TCC offset 4, EPP `performance`:
+
+| | 0 mV | −100 mV |
+|---|---|---|
+| all-core clock at 21.9 W | 2884 MHz | **3179 MHz** (+10.2 %) |
+| core power at a fixed 2.0 GHz | 9.10 W | **6.96 W** (−23.5 %) |
+
+On battery the trade inverts. EPP drops to `balance_power`, which pins all-core
+to exactly 2300 MHz and holds it there — so the offset cannot buy clock and buys
+power instead:
+
+| all-core, on battery | 0 mV | −100 mV |
+|---|---|---|
+| clock | 2300 MHz | 2300 MHz |
+| package | 14.18 W | **11.40 W** (−19.6 %) |
+| whole machine | 23.4 W | **19.8 W** (−15.4 %) |
+
+Roughly **+18 % battery runtime under sustained load**, at the same speed.
+
+### The setting, and why it is that one
+
+**−100 mV on core and cache**, together. Core and cache share a rail on this part
+and the delivered voltage follows the *higher* of the two requests, so moving one
+alone does almost nothing and an asymmetric pair silently delivers the smaller
+offset. They always move together.
+
+| offset | standing |
+|---|---|
+| **−100 mV** | **179 660 verified answers** over 2 h on AC and 45 min on battery, zero mismatches |
+| −120 mV | one unexplained display artifact, never reproduced — [not attestable](FIRMWARE.md) |
+| −140 mV | hard hang, frozen with the display lit |
+
+### `uvsoak` — earning the number
+
+Uptime is not stability. The failure that matters is a wrong answer, so
+`uvsoak.sh` checks answers:
+
+```bash
+sudo ./uvsoak.sh                    # 2h at -120 mV on AC
+sudo ./uvsoak.sh 7200 -100          # 2h at -100 mV
+sudo ./uvsoak.sh 2700 -100 battery  # battery leg, stops at 30% combined charge
+sudo ./uvsoak.sh 600 0              # control run, no offset applied
+```
+
+Four workloads run concurrently, each with a known answer compared bit-for-bit:
+a SHA-256 chain, 2048-bit modular exponentiation, an AVX2 matmul through
+single-threaded BLAS, and a 64 MB DRAM buffer per worker hashed whole every
+round. The last one exists because the first three all verify values living in
+registers and L1 — nothing was watching a path that reaches memory until it was
+added.
+
+Four phases cycle throughout, because undervolts do not fail uniformly: all-core
+saturation, single-thread turbo bursts with idle gaps, a deep-idle dwell, and
+partial load. The bursts and the idle exits are where these fail first.
+
+References are computed at 0 mV **before** the offset goes on, recomputed at 0 mV
+**after** it comes off, and written into the log header as constants any machine
+can reproduce. It aborts on a mismatch, a new machine-check bank, 99 °C, or a
+drifted offset, and clears the offset on every exit path. Every line is fsynced,
+so if the machine dies the last line on disk is the last thing that was true.
+
+Logs land in `/var/log/uvsoak/`.
+
+### Making it persistent
+
+Use `intel-undervolt` from the distro. This repo deliberately does not install a
+unit of its own for this:
+
+```bash
+sudo pacman -S intel-undervolt
+sudoedit /etc/intel-undervolt.conf     # enable yes; undervolt 0 and 2 only
+sudo intel-undervolt apply
+sudo systemctl enable --now intel-undervolt.service
+```
+
+Enable `intel-undervolt.service`, **not** `intel-undervolt-loop.service`. The
+loop daemon re-applies every five seconds, and continuous mailbox polling is one
+of the unresolved suspects behind the −120 mV artifact. Nothing needs it.
+
+### Suspend wipes it — measured, not assumed
+
+S3 drops the voltage-offset mailbox entirely. Both planes read `−99.61 mV` going
+into a lid close and **come back at zero**; `intel-undervolt.service` restores
+them a fraction of a second later only because it is hooked to `suspend.target`.
+
+The naive test cannot see this — anything that re-applies on resume has already
+run by the time you look, so "survived" and "was restored" produce an identical
+reading. Proving it took a probe ordered `Before=intel-undervolt.service`.
+
+Two consequences. It **fails safe**: a machine that loses the re-apply resumes at
+stock voltage rather than resuming undervolted into something unvalidated. And an
+unmanaged undervolt is **not persistent in any sense** — every suspend discards
+it, so anyone measuring after a lid close without a re-apply unit is measuring a
+stock machine and may not know it.
+
+### Removing it
+
+```bash
+sudo systemctl disable --now intel-undervolt.service
+sudo reboot
+```
+
+Nothing persists in hardware. The offsets live in the mailbox until power is
+lost, so a reboot alone returns all five planes to 0.00 mV.
+
+### The full evidence
+
+Every measurement, every failed hypothesis and every correction is in
+[`FIRMWARE.md`](FIRMWARE.md) — including the shared-rail discovery, the −140 mV
+hang, and the −120 mV artifact that has never been explained. The BIOS side,
+which is research rather than procedure, is in [`BIOS-MOD.md`](BIOS-MOD.md).
+
 ## Safety
 
 `thinkfan-ex` gives up manual control in two independent ways, because one of them
@@ -938,6 +1068,31 @@ sudo rm -f /etc/thinkpad-power-unlock.conf
 ```
 
 ## Changelog
+
+### Unreleased
+
+**Added**
+
+- `uvsoak.sh` — a soak harness that verifies *answers* rather than uptime, for
+  qualifying a CPU voltage offset. Four concurrent known-answer workloads
+  (SHA-256 chain, 2048-bit modular exponentiation, AVX2 matmul, and a 64 MB DRAM
+  buffer hashed whole), four load phases on a repeating cycle, references
+  computed at 0 mV before and after the run, and every log line fsynced so a
+  hang leaves the last true state on disk. See [Undervolting](#undervolting).
+- [`BIOS-MOD.md`](BIOS-MOD.md) — what hidden BIOS settings are on a T480, which
+  EFI setup stores are runtime-writable, and what the public research does and
+  does not establish. Research, not a procedure; nothing in it has been written
+  to a machine.
+
+**Documented**
+
+- An [Undervolting](#undervolting) section: −100 mV on core and cache as the
+  offset this hardware has evidence for, what it buys on AC and on battery, and
+  the two offsets that failed. Core and cache share a rail and must move
+  together.
+- Suspend drops the voltage-offset mailbox entirely — measured with a probe
+  ordered ahead of the re-apply, since "survived S3" and "was restored on
+  resume" otherwise read identically.
 
 ### 1.3.1
 
