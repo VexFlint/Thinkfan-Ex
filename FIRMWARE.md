@@ -1,5 +1,9 @@
 # Firmware and hardware control surfaces
 
+> Hardware facts for this machine — CPU, firmware version, batteries, what it
+> does and does not have — are in [`MACHINE.md`](MACHINE.md), read from the
+> machine rather than assumed. Check there before trusting a spec from memory.
+
 A map of every low-level entry point this machine exposes, what each one
 controls, whether it is locked, and what it costs to get it wrong.
 
