@@ -1,0 +1,11 @@
+[Unit]
+Description=Record OC mailbox offsets at resume, before intel-undervolt re-applies
+After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+Before=intel-undervolt.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/uv-resume-probe
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
