@@ -626,10 +626,85 @@ Left standing afterwards for the record: `coreThr` 10 and `pkgThr` 40 accumulate
 while TCC sat at 30, which is the reverted offset throttling at 70 C exactly as it
 says it should.
 
-One controlled pair is still missing. Both resume reverts on record — this one and
-the unattended one above — were idle **and** drawing from the pack, so "resume
-reverts" currently rests on two events sharing a power state. No AC-idle resume
-has been tested with the repairer removed, and that run is now cheap.
+One controlled pair was still missing when this was written. Both resume reverts
+on record — this one and the unattended one above — were idle **and** drawing
+from the pack, so "resume reverts" rested on two events sharing a power state.
+That pair has since been run, and the answer is below: on AC the resume revert
+fires but spares the TCC offset.
+
+### The AC resume revert is partial — PL1 moves, TCC does not (2026-09-08)
+
+The controlled pair the section above asked for. Run 1 was taken on a fresh boot
+with `odvp0` confirmed at 0; run 2 followed on the same boot. Both had the same
+repairers out of the way:
+`thinkpad-power-unlock.service` removed from `suspend.target.wants` with the boot
+path intact and `daemon-reload` verified against the runtime graph, watch unit
+disabled, `intel-undervolt` carrying voltage offsets only and logging mV at
+resume, `uv-resume-probe` read-only. One unit ran at this resume that the list
+above does not mention — `nvidia-resume.service` — and neither it nor
+`nvidia-sleep.sh` references TCC, RAPL or powercap.
+
+Held identical to the battery arm except the power source: TCC 4, MMIO PL1 22 W,
+idle, `--no-load`, witnessed at 1 Hz across the transition. The battery arm ran
+with `BAT0` on `force-discharge`; these ran on `[auto]` with the pack full, so
+the machine was adapter-fed.
+
+| arm | odvp0 at start | S3 dwell | TCC | mmio PL1 | odvp0 after |
+|---|---|---|---|---|---|
+| battery, idle | 0 | 12m15s | **4 → 30**, stays 30 | 22 → 15 → 22 | 7 |
+| AC, idle (run 1) | 0 | 8s | **4, never moved** | 22 → 15 → 22 | 7 |
+| AC, idle (run 2) | 7 | 8m27s | **4, never moved** | 22 → 15 → 22 | 7 |
+
+```
+   t   PkgW  MHz   C  TCC   mmioPL1  msrPL1  SMI  cThr  limiter
+  402   3.72 3902  55   4    22.00   25.00    6     0  max-turbo
+  407 56782.19 2823  35   4    15.00   25.00   -2     0  PL2
+### t=407s  pl1: 22000000  ->  15000000
+  408  16.56 2587  52   4    22.00   25.00   -2     0  turbo-atten
+### t=408s  pl1: 15000000  ->  22000000
+```
+
+**The revert fires on AC — it is not a null.** `odvp0` went 0 → 7 in run 1 and
+MMIO PL1 was caught at 15 W in both runs, so firmware acted at both resumes. What
+differs from battery is which registers it takes: the TCC offset stayed at 4 in
+every sample of both runs, start to end. **Power source is not on/off for the
+resume revert; it selects which registers claw back.**
+
+**Neither AC run is individually clean, but they fail in different ways.** Run 1
+had the required `odvp0 = 0` start and a dwell of only 8 s. Run 2 matched the
+battery arm's dwell but began with `odvp0` already latched at 7, spent by run 1 —
+the exact confound the precondition exists to prevent. The two defects do not
+overlap and neither plausibly produces a TCC hold by its own route: run 1 answers
+the dwell objection with a clean policy variable, and run 2 answers the policy
+objection with a matched dwell. Run 2 also shows firmware reverting PL1 *with*
+`odvp0` already at 7, so a latched policy variable does not gate the revert
+mechanism — for it to explain the TCC hold it would have to suppress the TCC
+write selectively while leaving the PL1 write intact, which nothing in this
+record proposes. **Still owed: one reboot, then AC with a long dwell, which
+predicts TCC holds at 4.**
+
+**The battery arm is n=1.** This asymmetry rests on two AC observations against a
+single battery capture with a per-row TCC reading. The base-rate problem recorded
+above — one revert in five comparable battery runs — is about the wild claw-back
+rather than resume, and every resume tested so far has reverted *something*, so
+the resume trigger looks reliable in a way the load trigger is not. But "battery
+takes TCC, AC does not" is one capture per arm on the register that matters, and
+should be read as such until a second battery resume confirms it.
+
+**This does not contradict "AC is not immune" above.** That capture was a *wild*
+claw-back during a load run, where TCC did go to 30 — inferred from the thermal
+signature rather than sampled per row. The event here is a resume, a different
+and far more reliable trigger. Taken together they say the resume revert on AC
+spares TCC while the wild claw-back on AC does not, which is a point of
+separation between the two paths rather than a conflict.
+
+**A correction to `thinkpad-power-unlock`.** That script's header comment has
+long claimed "suspending an *idle* T480 leaves both limits untouched… Idle resume
+needs nothing; loaded resume does." The battery arm is an idle resume that
+reverted both registers, and both AC runs are idle resumes that reverted PL1. The
+comment predates the removal of the repairer from the suspend path, which is
+almost certainly why idle resumes looked clean: the unit put the limits back
+0.3 s later. Corrected in the script.
 
 ### Eight cold-start trials on AC, none reverted (2026-09-08)
 
@@ -1606,7 +1681,10 @@ boot. Question 2 being answered does not make the witness reusable within a boot
    is now a reproduced trigger** — a controlled, idle, `--no-load` suspend with
    every repairer removed reverted both registers on the first post-resume
    sample (2026-09-08), the second resume revert on record and the first
-   instrumented one. The cold-fan hypothesis should now be treated as dead
+   instrumented one. Two AC resumes the same day fired as well but **partially**:
+   MMIO PL1 reverted and `odvp0` latched while the TCC offset held at 4, so
+   resume triggers on both power sources and the power source decides which
+   registers move. The cold-fan hypothesis should now be treated as dead
    rather than merely unreproduced: eight cold-start trials with the fan stopped
    at onset, at up to 33.6 W and 92 C — hotter and harder than the run that
    reverted — produced nothing. Battery state, temperature, peak power, fan
