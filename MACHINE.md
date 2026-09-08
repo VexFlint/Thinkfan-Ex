@@ -86,7 +86,12 @@ device that is plugged in is authorised automatically. The saving grace is that
 device and memory. That is a mitigation, not a policy — if this machine ever
 travels somewhere untrusted, raise the security level first.
 
-### A removed NVMe leaves a stale device that blocks suspend
+### A removed NVMe leaves a stale device that blocks suspend — *cleared*
+
+> [!NOTE]
+> **Resolved by the reboot at 2026-09-08 13:45.** Kept in full because the
+> failure recurs every time the M.2 drive is pulled from a running system, and
+> because the evidence it leaves behind is misreadable in two separate ways.
 
 The `WD_BLACK SN770M 1TB` in the M.2 slot was **physically removed by the owner
 while the system was running** (2026-09-08 12:24). M.2 NVMe is not hot-pluggable
@@ -108,13 +113,46 @@ nvme 0000:02:00.0: PM: pci_pm_suspend(): nvme_suspend returns -16
 nvme 0000:02:00.0: PM: failed to suspend async: error -16
 ```
 
-**A reboot clears all of it.** Nothing is broken and no drive was lost.
+**A reboot cleared all of it**, as predicted. Nothing was broken and no drive
+was lost. After the boot at 13:45 the M.2 slot is simply empty — the device is
+gone from sysfs and from the PCI bus, not merely marked dead:
 
-> Worth recording as a diagnostic lesson rather than a hardware fact: read this
-> way round, the logs look exactly like a drive that failed on its own, and this
-> file briefly said so. `dmesg -T` gave the wall-clock time and the owner gave
-> the cause. **Relative dmesg timestamps are easy to convert wrongly — use
+```
+$ ls /sys/class/nvme/         # ls: cannot access: No such file or directory
+$ lspci -nn | grep -i 15b7    # (no output)
+$ who -b                      # system boot  2026-09-08 13:45
+```
+
+> **Lesson one, on reading the logs.** Read cold and in the wrong direction,
+> these lines look exactly like a drive failing on its own, and this file
+> briefly said so. `dmesg -T` gave the wall-clock time and the owner gave the
+> cause. **Relative dmesg timestamps are easy to convert wrongly — use
 > `dmesg -T`.**
+
+> **Lesson two, on reading the resume probe.** `uv-resume-probe` records the OC
+> mailbox on every wake from `suspend.target`, precisely so that *the offset
+> survived S3* can be told apart from *the offset was restored for us*. A
+> suspend that **aborts** still fires that target, so the probe still runs — and
+> writes a row showing the offset intact, because the core rail never lost
+> power. Two such rows are in the log, and they read like survival:
+>
+> ```
+> 2026-09-07 12:34:33  core=+0.00   cache=+0.00     <- real S3, 8h59m asleep
+> 2026-09-08 12:24:31  core=+0.00   cache=+0.00     <- real S3, 23h49m asleep
+> 2026-09-08 13:16:42  core=-99.61  cache=-99.61    <- suspend ABORTED by nvme
+> 2026-09-08 13:41:27  core=-99.61  cache=-99.61    <- suspend ABORTED by nvme
+> ```
+>
+> They are not survival; they are a suspend that never happened. **Pair every
+> row of `/var/log/uvsoak/resume-probe.log` with a `PM: suspend exit` that is
+> *not* preceded by `PM: Some devices failed to suspend`** before believing it:
+>
+> ```bash
+> journalctl -b -1 -k | grep -E 'PM: suspend (entry|exit)|failed to suspend'
+> ```
+>
+> The finding itself is unaffected — **suspend wipes the mailbox** still rests
+> on the `+0.00` rows from the three suspends that actually completed.
 
 ### The two risk tiers this repo works in
 
@@ -171,7 +209,8 @@ resume by a unit, not preserved by hardware.
 |---|---|
 | RAM | **16 GB** — 2 × 8 GB Samsung `M471A1K43DB1-CTD`, DDR4-2400, 1 rank each, dual channel (`ChannelA-DIMM0`, `ChannelB-DIMM0`) |
 | Boot disk | **Crucial MX500 250 GB** SATA (`/dev/sda`), btrfs on `sda2` |
-| NVMe | M.2 slot **empty** — drive removed 2026-09-08; a stale `nvme0` lingers until reboot, see [Hazards](#hazards) |
+| NVMe | M.2 slot **empty** — `WD_BLACK SN770M 1TB` removed 2026-09-08; clean since the 13:45 reboot, see [Hazards](#hazards) |
+| Card reader | `sdb`, Generic SD/MMC over USB — reads **0 B** with no card inserted, which is normal and not a fault |
 | iGPU | Intel UHD Graphics 620, Kaby Lake-R GT2 (`8086:5917`) |
 | dGPU | **NVIDIA GeForce MX150** (`10de:1d10`, GP108M) |
 | Panel | 1920×1080 eDP |
