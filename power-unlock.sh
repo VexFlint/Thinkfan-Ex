@@ -17,7 +17,9 @@
 #                at 70C); lowering it lets the chip run closer to TjMax.
 #   MMIO PL1     sustained package power. The hardware enforces min(MSR, MMIO),
 #                so on machines where the MSR copy is already generous only the
-#                MMIO copy needs raising.
+#                MMIO copy needs raising. Measured on a T480, not assumed:
+#                steady state follows the MMIO copy at 12/18/22 W with the MSR
+#                copy at 25 W throughout. See pl1probe.py and FIRMWARE.md.
 #   EPP          the hardware governor's energy/performance hint. Not a limit, so
 #                it sets no bit in CORE_PERF_LIMIT_REASONS -- but on battery it is
 #                what actually decides the frequency. Measured on a T480 with the

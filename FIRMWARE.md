@@ -88,6 +88,70 @@ Turbo is `0x27272a2a`: **42x** (4.2 GHz) for 1-2 cores, **39x** for 3-4.
 `MSR 0x150` — the overclocking mailbox — reads `0x000185dd` and is unlocked.
 This is the undervolt interface (what `intel-undervolt` drives). Untouched here.
 
+### Which PL1 copy binds — measured (2026-09-08)
+
+This file and the README both state that hardware enforces `min(MSR, MMIO)`, and
+`power-unlock` writes only the MMIO copy on the strength of it. Open question 10
+put that in doubt: a 90 s run measured 24.87 W package with MMIO PL1 set to 22 W,
+which is within noise of the *MSR* copy's 25 W.
+
+Tested directly with `pl1probe.py` — it drives MMIO PL1 to a requested value,
+loads all eight threads, and samples package power from `MSR_PKG_ENERGY_STATUS`
+deltas every 5 s alongside both limit copies, the TCC offset and
+`MSR_PERF_LIMIT_REASONS`. AC, EPP `performance`, `power-profiles-daemon` stopped
+*before* EPP was set so its AC handler could not win the race, fan pinned to
+level 7 and TCC offset 4 (throttle at 96 C) so thermal could not bind.
+
+| run | MMIO PL1 | MSR PL1 | tail-half mean | limiter in tail |
+|---|---|---|---|---|
+| E | 12 W | 25 W | **12.09 W** | PL1 |
+| C | 18 W | 25 W | **18.10 W** | PL1 |
+| D | 22 W | 25 W | **21.98 W** | PL1 |
+
+Steady state tracks the MMIO copy across a 10 W span while the MSR copy sits
+untouched at 25 W throughout. **`min(MSR, MMIO)` holds, and the MMIO copy is the
+binding one.** The three places that assert it — `power-unlock.sh`, the README's
+"Raising the power limits", and the `lock=0` note above — stand as written.
+
+12 W was picked deliberately. 22 against 25 W is a 3 W discrimination, and 1.45 W
+of run-to-run drift is already documented in this exact setup — the confound that
+wrecked the first −50 mV attempt below. 12 against 25 W cannot be mistaken for
+drift.
+
+#### Why the 90 s run read 24.87 W
+
+PL1 is not a hard cap. It is an average over its time window — 27.98 s here, from
+`MSR_PKG_POWER_LIMIT` bits 23:17 — and a load started from idle runs at **PL2**
+until that average catches up. `MSR_PERF_LIMIT_REASONS` (0x64F) names the active
+limiter directly, so this is read off the hardware rather than inferred:
+
+| t | `0x64F` low bits | bit | limiter | PkgWatt |
+|---|---|---|---|---|
+| 5 s | `0x1000` | 12 | max turbo | 29.97 |
+| 10–30 s | `0x0800` | 11 | **PL2, 29 W** | ~29 |
+| 35–300 s | `0x0400` | 10 | **PL1, 22 W** | ~22 |
+
+Crossover at t≈33 s. A 90 s run therefore spends its first third at 29 W *by
+design*, and its arithmetic mean lands well above PL1 whatever PL1 is set to:
+
+```
+prefix  90s   24.61 W     <- the original run measured 24.87 W
+prefix 180s   23.28 W
+whole  300s   22.76 W
+tail  150s+   21.98 W     <- the actual limit
+```
+
+**The 24.87 W was a run-length artifact, not evidence about which copy binds.**
+The step that made it look like evidence — "90 s is longer than the 28 s window,
+so this is not a transient" — is the error: 28 s is the averaging constant, and
+convergence takes several of them.
+
+This run had the fan pinned at level 7 where the original had it on `auto`, so it
+was *better* cooled, not worse, and the prefix mean reproduced anyway.
+
+`MSR_CORE_PERF_LIMIT_REASONS` (0x690) reads `0x0` in every sample on this part.
+0x64F is the one that is populated here; the kernel defines both.
+
 ## DPTF (`INT3400`) — Intel's dynamic thermal manager
 
 ```
@@ -388,6 +452,39 @@ state, temperature, peak power and fan state each individually ruled out as the
 trigger. The honest position is that short runs are the wrong instrument for an
 event this rare, not that the trigger is exotic.
 
+### One more revert, on AC this time (2026-09-08)
+
+Caught incidentally by the PL1 probe. First load run of the session: TCC 4 and
+MMIO PL1 12 W going in, and between t=5 s and t=10 s both went to the firmware
+defaults — TCC 30, PL1 15 W. `MSR_PKG_POWER_LIMIT` read 25.00 W before and
+after, which is what answers open question 1.
+
+What that run logged directly is the MMIO PL1 move and the MSR staying put; it
+did not yet sample TCC per row, so the TCC move is read off the thermal
+signature — power pinned at 70 C with `0x64F` bit 1 (thermal) asserted, which is
+throttle-at-70 and therefore offset 30 — plus the next run's header. A later
+self-test settles that the signature is right: writing TCC 30 and PL1 15 W into
+a healthy run by hand reproduces that row exactly, 70 C and `0x0002` included.
+
+What this adds, and what it does not:
+
+- **It was on AC.** Every prior capture was on battery. AC is not immune.
+- **Sub-TDP PL1 is not the trigger.** The obvious reading was that writing PL1
+  below the 15 W TDP provokes the firmware to reassert. Tested directly: run E
+  requested the same 12 W under the same load and held it for 90 s, tail 12.09 W.
+  So the request being out of range is not what did it.
+- **The three later runs of the session held**, with TCC 4 written immediately
+  before each load, at up to 94 C and 30 W peak. Nothing about heat or power
+  separates them from the one that reverted.
+- The one difference left is that the reverting run was the first load after a
+  long idle, with the fan still spinning up from `auto` (2148 RPM at load onset
+  against ~2460 in the runs that held). That is the cold-fan hypothesis again,
+  which the section above already failed to reproduce under a direct test — so
+  this is a consistent observation, not a revival of it.
+
+The count is now one revert in four comparable AC runs on top of one in five on
+battery, and the trigger is still unidentified.
+
 ## DYTC — Lenovo Intelligent Cooling
 
 The most interesting thing found so far, and the leading claw-back suspect.
@@ -521,12 +618,20 @@ voltage regulator acts on it.
 
 First attempt, and why it failed: four alternating 90 s runs of `stress -c 8` on
 AC in the PL1-limited regime, 0 / −50 / 0 / −50. Package power fell monotonically
-across all four — 24.87, 23.67, 23.42, 22.08 W — regardless of voltage, because
-the chassis was soaking heat the whole time. Each −50 arm was ~1.2 W under the
-0 arm before it, but the drift between two 0 arms was 1.45 W. **The effect and
-the confound were the same size.** A power-limited comparison cannot answer this:
-the governor is free to trade the saved watts for clock, and the clock was
-falling too.
+across all four — 24.87, 23.67, 23.42, 22.08 W — regardless of voltage. Each
+−50 arm was ~1.2 W under the 0 arm before it, but the drift between two 0 arms
+was 1.45 W. **The effect and the confound were the same size.** A power-limited
+comparison cannot answer this: the governor is free to trade the saved watts for
+clock, and the clock was falling too.
+
+> **Correction (2026-09-08).** This paragraph originally attributed the decline
+> to the chassis soaking heat. That is wrong. The decline is the PL1 average
+> converging: the first arm caught the PL2 phase, each later arm started further
+> into the converged state, and the series terminates at 22.08 W — the MMIO PL1
+> setting itself, not a thermal asymptote. See "Which PL1 copy binds" above,
+> where a 300 s run reproduces the same curve with the temperature held down by
+> a pinned fan. The conclusion this paragraph draws is unaffected: what killed
+> the comparison was the drift, not what caused it.
 
 Second attempt, at a pinned frequency where PL1 is far away and nothing can move
 but voltage. All cores capped at 2.0 GHz, 8 threads, six 40 s arms alternating,
@@ -1268,10 +1373,20 @@ observe, reboot to confirm it resets, and only then automate it.
 
 ## Open questions
 
-1. **Does the claw-back move the MSR copy too, or only MMIO?** Unresolved — the
-   probe designed to answer it ran five clean runs and never caught a revert.
-   If MSR survives while MMIO drops, whatever does this writes the BAR
-   specifically, which narrows the mechanism sharply.
+1. ~~Does the claw-back move the MSR copy too, or only MMIO?~~ **Answered
+   2026-09-08 — MMIO only.** A revert fired during a PL1 run that was sampling
+   `MSR_PKG_POWER_LIMIT` every 5 s. MMIO PL1 went 12 W → 15 W between t=5 s and
+   t=10 s, and the MSR copy read 25.00 W in every sample, before and after. So
+   whatever does this writes the BAR specifically and leaves the MSR copy
+   alone, which narrows the mechanism as hoped. Precisely: the MSR reading and
+   the MMIO move are logged; the TCC offset moving 4 → 30 in the same window is
+   inferred from that run's thermal signature (pinned at 70 C, `0x64F` bit 1)
+   and the next run's header, since that run did not yet sample TCC per row.
+   Simultaneity is independently established by the wild capture above, which
+   logged both 39 ms apart — but that one did not sample the MSR copy, and this
+   one did. Two caveats: the MSR was read on cpu0 only, and this is a single
+   capture. It is also the first revert caught **on AC** — every prior one was
+   on battery — so AC is not immune.
 2. **Does `odvp0` move at the revert?** Same probe, same non-result.
 3. **Is DYTC invoked during load?** Nothing observed yet; no OS-side trigger
    exists on this machine.
@@ -1294,17 +1409,23 @@ observe, reboot to confirm it resets, and only then automate it.
 8. **What triggers the claw-back?** Still open, and now with battery state,
    temperature and peak power all ruled out as sufficient. The surviving
    hypothesis is a power/thermal excursion taken while the fan is still ramping
-   from cold — one supporting run, no controlled pair.
+   from cold — one supporting run, no controlled pair, and one direct test that
+   failed to reproduce it. A further AC capture on 2026-09-08 ruled out an
+   out-of-range (sub-TDP) PL1 write as the trigger and showed AC runs revert
+   too.
 9. **Is there a DC ceiling above 22 W at all?** Untested. PL1 22 W was the
    binding limit in the run that reached 21.9 W, so the question of what the
    pack and the EC allow above that is unprobed.
-10. **Why does the package sustain 24.87 W with MMIO PL1 set to 22 W?** Measured
-   on AC over a full 90 s run, so it is not the 28 s window letting a transient
-   through. 24.87 W is within noise of the *MSR* copy's 25 W. If the MMIO copy is
-   not the binding one here, "the hardware enforces min(MSR, MMIO)" — which this
-   file and the README both state, and which `power-unlock` is built on — is
-   wrong or incomplete on this part. The battery runs do not settle it: they
-   never reached either limit.
+10. ~~Why does the package sustain 24.87 W with MMIO PL1 set to 22 W?~~
+   **Answered 2026-09-08 — it does not.** It was a run-length artifact: the first
+   ~33 s of any run from idle is PL2-limited at 29 W, so a 90 s arithmetic mean
+   necessarily overshoots PL1. A 300 s run at the same setting gives a 90 s
+   prefix mean of 24.61 W against the original's 24.87 W, and a tail of 21.98 W.
+   Steady state tracks the MMIO copy at 12, 18 and 22 W while the MSR copy stays
+   at 25 W, so `min(MSR, MMIO)` holds and `power-unlock` is built on solid
+   ground. See "Which PL1 copy binds — measured" above. The premise that made
+   this a question — "90 s is longer than the 28 s window, so not a transient" —
+   was the actual error.
 11. **Why did the first AC run report 16 SMIs and 16 `CoreThr` events when every
    battery run reported zero of both?** Only the first run after plugging in.
    Charging is the obvious difference, and the SMI counter is the instrument the
