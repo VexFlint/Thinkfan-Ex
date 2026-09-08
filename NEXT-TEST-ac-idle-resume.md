@@ -51,6 +51,16 @@ The classifier blocks Claude from changing systemd units:
     systemctl show suspend.target -p Wants | tr ' ' '\n' | grep power-unlock
     # expect NO output -- verify the runtime graph, not just the disk
 
+**Do this before the reboot, not after.** That symlink is persistent on disk, so
+removing it survives the reboot, while the boot path (`multi-user.target.wants`,
+a separate symlink) still applies TCC 4 and PL1 22 W at startup — which is the
+state this test needs anyway. Removing it pre-reboot means the machine comes up
+already armed and the run needs no systemd step at all. `daemon-reload` is
+redundant if you are rebooting straight after; the reboot reloads from disk.
+
+Note also that `systemctl reenable` restores the unit to **all four** sleep
+targets while this `rm` clears only `suspend.target` — see the restore section.
+
 ## Run
 
     cd /home/vex/DEV/Thinkfan-Ex
