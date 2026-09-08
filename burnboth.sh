@@ -218,7 +218,7 @@ PL1_PATH = "/sys/class/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_p
 def limits():
     """The unit applies these at boot, verifies them, and exits 0 -- which says
     nothing about whether they survive. Both limits have been caught reverting to
-    the firmware defaults mid-run, once in five valid runs at full load on AC and
+    the firmware defaults mid-run, once in ten valid runs at full load on AC and
     once more on battery, at t=12s and t=104s -- real, intermittent, and with no
     trigger identified. Nothing reverts them at idle. Sampling every tick and
     printing the exact second is the only way to catch it, so do not throttle this

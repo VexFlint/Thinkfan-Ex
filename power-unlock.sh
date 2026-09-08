@@ -18,6 +18,11 @@
 #   MMIO PL1     sustained package power. The hardware enforces min(MSR, MMIO),
 #                so on machines where the MSR copy is already generous only the
 #                MMIO copy needs raising.
+#   EPP          the hardware governor's energy/performance hint. Not a limit, so
+#                it sets no bit in CORE_PERF_LIMIT_REASONS -- but on battery it is
+#                what actually decides the frequency. Measured on a T480 with the
+#                other two limits held identical: balance_power 14.5W / 2.4GHz,
+#                performance 22.6W / 2.9GHz. See FIRMWARE.md.
 #
 # This script does NOTHING without /etc/thinkpad-power-unlock.conf. That is
 # deliberate: raising these limits makes a machine run hotter, the right values
@@ -47,19 +52,29 @@ fi
 
 TCC_OFFSET=${TCC_OFFSET:-}
 PL1_UW=${PL1_UW:-}
+EPP=${EPP:-}
 
-if [ -z "$TCC_OFFSET" ] && [ -z "$PL1_UW" ]; then
-    echo "$CONF sets neither TCC_OFFSET nor PL1_UW -- nothing to apply."
+if [ -z "$TCC_OFFSET" ] && [ -z "$PL1_UW" ] && [ -z "$EPP" ]; then
+    echo "$CONF sets none of TCC_OFFSET, PL1_UW or EPP -- nothing to apply."
     exit 0
 fi
 
 TCC=$(echo /sys/devices/pci0000:00/*/tcc_offset_degree_celsius)
 PL1=/sys/class/powercap/intel-rapl-mmio/intel-rapl-mmio:0/constraint_0_power_limit_uw
+EPP_GLOB="/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference"
+# cpu0's node stands in for the set when reading. Empty if the glob matched
+# nothing, so "this machine has no EPP interface" reads differently from "your
+# CPU does not offer that value" -- they are not the same failure.
+set -- $EPP_GLOB
+EPP0=$1
+[ -e "$EPP0" ] || EPP0=""
 
 # The powercap and processor_thermal devices are bound by drivers that may not
 # have probed yet when this unit runs. Wait, briefly, rather than failing.
 for _ in $(seq 1 20); do
-    [ -w "$TCC" ] && [ -w "$PL1" ] && break
+    # Only wait for what this config actually asks for: an EPP-only config has no
+    # business blocking ten seconds on a thermal device it never touches.
+    { [ -z "$TCC_OFFSET" ] || [ -w "$TCC" ]; } && { [ -z "$PL1_UW" ] || [ -w "$PL1" ]; } && break
     sleep 0.5
     TCC=$(echo /sys/devices/pci0000:00/*/tcc_offset_degree_celsius)
 done
@@ -87,8 +102,53 @@ apply() { # path wanted label
     fi
 }
 
+# One value, written to every CPU: intel_pstate exposes the hint per policy, and
+# a machine with half its cores on a different hint is not a state anyone means.
+apply_epp() { # wanted
+    [ -z "$1" ] && return 0
+    local f got ok=0 bad=0 avail="" list=""
+    if [ -z "$EPP0" ]; then
+        echo "FAIL EPP = $1: no cpufreq EPP interface on this system"
+        rc=1
+        return 1
+    fi
+    list="${EPP0%_preference}_available_preferences"
+    [ -r "$list" ] && read -r avail < "$list"
+    case " $avail " in
+        *" $1 "*) ;;
+        *) echo "FAIL EPP = $1 is not offered here (have: ${avail:-none})"; rc=1; return 1 ;;
+    esac
+    for f in $EPP_GLOB; do
+        [ -w "$f" ] || continue
+        printf '%s\n' "$1" > "$f" 2>/dev/null
+        read -r got < "$f" 2>/dev/null || got=""
+        if [ "$got" = "$1" ]; then ok=$((ok + 1)); else bad=$((bad + 1)); fi
+    done
+    if [ "$bad" = 0 ] && [ "$ok" -gt 0 ]; then
+        echo "ok   EPP = $1 on $ok CPUs"
+    else
+        echo "FAIL EPP = $1 on $ok CPUs, $bad refused"
+        rc=1
+        return 1
+    fi
+}
+
 apply "$TCC" "$TCC_OFFSET" "TCC offset"
 apply "$PL1" "$PL1_UW" "MMIO PL1 (uW)"
+
+# Unlike the other two, EPP has an owner in userspace. power-profiles-daemon and
+# TLP both rewrite it on profile changes and on AC plug/unplug, so a one-shot
+# write here is only good until the next such event -- say so rather than let it
+# look like it stuck.
+if [ -n "$EPP" ] && apply_epp "$EPP"; then
+    for svc in power-profiles-daemon tlp tuned; do
+        if systemctl is-active --quiet "$svc" 2>/dev/null; then
+            echo "     note: $svc owns EPP too and rewrites it on profile and AC changes"
+            [ "$WATCH" = 1 ] || echo "     -- and nothing orders this unit after it at boot, so a one-shot"
+            [ "$WATCH" = 1 ] || echo "     write can lose that race. Enable the watch unit to keep it set"
+        fi
+    done
+fi
 
 tj=$(tjmax)
 if [ -n "$tj" ] && [ -n "$TCC_OFFSET" ]; then
@@ -96,7 +156,7 @@ if [ -n "$tj" ] && [ -n "$TCC_OFFSET" ]; then
 fi
 
 # Firmware can claw these back under sustained load, not just at boot. It is
-# intermittent: caught once in five valid runs at full load, at t=12s and t=104s
+# intermittent: caught once in ten valid runs at full load, at t=12s and t=104s
 # in separate runs, with no trigger identified. Re-run this unit to reapply, or
 # run it with --watch to have that done automatically; see the README.
 
@@ -108,7 +168,7 @@ watch_loop() {
     local iv=${WATCH_INTERVAL:-0.5} cur now
     case "$iv" in ''|*[!0-9.]*) iv=0.5 ;; esac
     logger -t thinkpad-power-unlock-watch \
-        "watching every ${iv}s: TCC_OFFSET=${TCC_OFFSET:-unset} PL1_UW=${PL1_UW:-unset}"
+        "watching every ${iv}s: TCC_OFFSET=${TCC_OFFSET:-unset} PL1_UW=${PL1_UW:-unset} EPP=${EPP:-unset}"
     while :; do
         if [ -n "$TCC_OFFSET" ]; then
             read -r cur < "$TCC" 2>/dev/null || cur=""
@@ -126,6 +186,19 @@ watch_loop() {
                 read -r now < "$PL1" 2>/dev/null || now="?"
                 logger -t thinkpad-power-unlock-watch \
                     "REVERT: MMIO PL1 was $cur (wanted $PL1_UW), rewrote -> $now"
+            fi
+        fi
+        # Here the reverter is usually a power daemon, not the firmware, and it
+        # acts on events (AC, profile) rather than continuously -- so this is one
+        # rewrite per event, not a fight. cpu0 stands in for the set: they are
+        # written together and nothing else moves them one at a time.
+        if [ -n "$EPP" ] && [ -n "$EPP0" ]; then
+            read -r cur < "$EPP0" 2>/dev/null || cur=""
+            if [ -n "$cur" ] && [ "$cur" != "$EPP" ]; then
+                for f in $EPP_GLOB; do printf '%s\n' "$EPP" > "$f" 2>/dev/null; done
+                read -r now < "$EPP0" 2>/dev/null || now="?"
+                logger -t thinkpad-power-unlock-watch \
+                    "REVERT: EPP was $cur (wanted $EPP), rewrote -> $now"
             fi
         fi
         sleep "$iv"

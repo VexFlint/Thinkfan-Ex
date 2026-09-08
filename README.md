@@ -32,6 +32,7 @@ you want your own curve. This gives you one.
 | [Configuration](#configuration) | The curve, and the five knobs that shape it |
 | [Measuring your fan](#measuring-your-fan) | Finding your real RPM ladder before you tune |
 | [Power and charging](#power-and-charging) | `chargewatch`, USB-C PD, and where the watts go |
+| [Undervolting](#undervolting) | `uvsoak`, the validated offset, and how it was earned |
 | [Safety](#safety) · [Logging](#logging) · [Troubleshooting](#troubleshooting) | Operating it |
 | [Uninstallation](#uninstallation) · [Changelog](#changelog) | Removing it, and what changed |
 
@@ -678,6 +679,7 @@ applies nothing until you uncomment one.
 |---|---|
 | `TCC_OFFSET` | Degrees below TjMax at which throttling begins. `0` means throttle at TjMax |
 | `PL1_UW` | Sustained package power, in microwatts |
+| `EPP` | The hardware governor's energy/performance hint — `performance`, `balance_performance`, `balance_power`, `power` |
 
 **TjMax is not 100 on every part.** Read yours before choosing an offset:
 
@@ -694,23 +696,74 @@ Re-run `sudo thinkfan-ex -powerunlock` after editing the config, or
 `sudo systemctl restart thinkpad-power-unlock` — it reports what it applied and
 the resulting throttle temperature, and exits non-zero if a write did not stick.
 
+#### `EPP`, and why it is the one that matters on battery
+
+The two limits above are ceilings. `EPP` is what decides how close to them the
+hardware governor actually goes, and on battery it is usually the binding
+constraint — not the ceilings, and not anything in the BIOS.
+
+`power-profiles-daemon` sets `EPP=balance_power` on battery in its `balanced`
+profile. Measured on the T480, 8 threads, 120 s, with `TCC_OFFSET=4` and
+`PL1_UW=22000000` held identical and verified per sample in both runs:
+
+| EPP | sustained package | all-core clock | from the pack |
+|---|---|---|---|
+| `balance_power` | 14.5 W | 2.39 GHz | 22.4 W |
+| `performance` | **21.9 W** | **2.93 GHz** | 31.7 W |
+
+That is the AC number reached on battery, for half again the pack draw. Two
+threads at `balance_power` sit at 9.0 W and *still* clock 2.4 GHz — the hint
+holds the frequency down even when nothing is near a power limit, which is why
+`CORE_PERF_LIMIT_REASONS` reports no reason for the clamp. It is not a limit.
+
+The quick way to the same place, no config needed:
+
+```bash
+powerprofilesctl set performance     # ppd's own lever; reverts on profile change
+```
+
+Setting `EPP` in the unlock config is for wanting it every boot and every resume.
+Note the ownership problem: `power-profiles-daemon`, TLP and tuned all write EPP
+too, on profile changes and on AC plug/unplug, so a one-shot write holds only
+until the next such event — and nothing orders `thinkpad-power-unlock` after
+those daemons at boot, so a one-shot write can lose that race outright. The
+script says so when it detects one of them running. **With `EPP` set, enable the
+watch unit**: it puts the value back and logs each correction like any other
+revert. If you would rather not have two things writing one file, set the profile
+with `powerprofilesctl` instead and leave `EPP` commented out.
+
 > **The firmware can claw these back under sustained load**, not only at boot. Both
 > limits revert together to the firmware defaults — `tcc4/pl1 22W` becomes
 > `tcc30/pl1 15W` — and stay reverted until something re-applies them. It is
-> intermittent: **once in five** valid runs at full load on AC, plus once more on
-> battery. The symptom is a machine that suddenly pins at the *firmware* throttle
+> intermittent: **once in ten** valid runs at full load on AC, plus once more on
+> battery. (An earlier figure of one in five was based on the first five trials;
+> five further clean runs halved it. Both numbers rest on a single revert, so
+> treat the rate as "occasional", not as measured.) The symptom is a machine that suddenly pins at the *firmware* throttle
 > temperature. Check with `systemctl restart thinkpad-power-unlock`, which reprints
 > the live values.
 >
-> No trigger has been found. Ruled out by measurement: adapter saturation (three
-> clean runs that each drove charge power to 0 W), temperature (it reverted at
-> 74 C and ran clean at 97 C), AC versus battery (seen on both), a userspace
-> daemon (`power-profiles-daemon` stays on `performance` and has no platform
-> driver on this chassis; no thermald/tlp/tuned), a kernel or ACPI event (the
-> journal is silent in every window), iGPU versus dGPU load, and elapsed time
-> (it has fired at t=12 s and at t=104 s). Nothing OS-visible distinguishes a
-> reverting run from a clean one, which points at the EC or SMM acting below the
-> kernel's view.
+> No trigger has been found. **Read the list below as "did not reproduce", not as
+> "ruled out".** The whole branch has caught three events across dozens of 90-120 s
+> runs — call it one or two percent per minute of load — so a short run that stays
+> clean is what you would expect whether the hypothesis is right or wrong. Each
+> line here rests on one or two non-reproductions:
+>
+> Adapter saturation (three clean runs that each drove charge power to 0 W),
+> temperature (it reverted at 74 C and ran clean at 97 C; on a later boot it
+> reverted at 81 C and ran clean at 84 C), AC versus battery (seen on both, and
+> four battery runs on one boot split one to three), fan state (it reverted from a
+> cold fan once, then held from an equally cold fan at 34 W and 85 C), a userspace
+> daemon (`power-profiles-daemon` never writes either register, and has no
+> platform driver on this chassis; no thermald/tlp/tuned — note that it *does*
+> write EPP, which governs frequency but is not the claw-back), a kernel or ACPI
+> event (the journal is silent in every window), iGPU versus dGPU load, and
+> elapsed time (it has fired at t=6 s, t=12 s and t=104 s). Nothing OS-visible
+> distinguishes a reverting run from a clean one, which points at the EC or SMM
+> acting below the kernel's view.
+>
+> The way to make progress is dwell time, not more hypotheses: one long soak with
+> the watch unit off and everything logged, rather than another short run designed
+> to discriminate between conditions that no single event can separate.
 >
 > An earlier note recorded PL1 reverting first with TCC following half a second
 > later. The captures since show both moving inside a single 0.5 s sample, so the
@@ -759,8 +812,8 @@ Three ways the limits could be lost, and what each actually does on a T480
 | | Result | How it was checked |
 |---|---|---|
 | **Reboot** | Holds | Unit runs at boot; `TCC 4 / PL1 22 W` live in sysfs afterwards |
-| **Sustained load** | Usually | Clean in four of five valid 300 s runs on AC; the fifth reverted at t=12 s. See the claw-back note above |
-| **Suspend / resume** | Depends on load | Idle: config moved aside so the unit no-ops, 75 s S3, both limits came back untouched. Under load: suspended mid-run, came back at firmware defaults — the unit restored them 0.5 s later |
+| **Sustained load** | Usually | Clean in nine of ten valid 300 s runs on AC; the other reverted at t=12 s. See the claw-back note above |
+| **Suspend / resume** | Depends on power source | On AC, idle: 75 s S3 with the unit no-op'd, both limits came back untouched. On battery: reverted to firmware defaults on resume, both when loaded and when idle — see `FIRMWARE.md` |
 
 The load run is also the positive control that the limits are doing something:
 package power sits at **21.9 W sustained** against the 22 W PL1, and the throttle
@@ -800,6 +853,135 @@ sequencing, real starvation, the hysteresis band, discharge-on-AC, 100 W vs 45 W
 chargers, missing UCSI, the capped ETA — is one command rather than an afternoon
 with a charger. `-probe` is deliberately not covered, since it pegs every core;
 test that one by hand.
+
+## Undervolting
+
+Lowering the CPU's voltage at a given frequency. On a power-limited chassis that
+is close to free performance — the part spends the saved watts on clock — and on
+battery it turns into runtime instead. It is also the one thing in this repo that
+can corrupt data silently, so it is opt-in, unautomated by the installer, and
+documented here with the evidence rather than a recommendation.
+
+> [!CAUTION]
+> A bad undervolt does not announce itself. It hangs the machine if you are
+> lucky, and returns a wrong answer under a workload you did not test if you are
+> not. Nothing here should be applied to a machine holding work you have not
+> backed up, and no number below transfers to another laptop — silicon varies
+> part to part, and the same chip model will not take the same offset.
+
+### What it bought
+
+Measured on a T480 i7-8650U, MMIO PL1 22 W, TCC offset 4, EPP `performance`:
+
+| | 0 mV | −100 mV |
+|---|---|---|
+| all-core clock at 21.9 W | 2884 MHz | **3179 MHz** (+10.2 %) |
+| core power at a fixed 2.0 GHz | 9.10 W | **6.96 W** (−23.5 %) |
+
+On battery the trade inverts. EPP drops to `balance_power`, which pins all-core
+to exactly 2300 MHz and holds it there — so the offset cannot buy clock and buys
+power instead:
+
+| all-core, on battery | 0 mV | −100 mV |
+|---|---|---|
+| clock | 2300 MHz | 2300 MHz |
+| package | 14.18 W | **11.40 W** (−19.6 %) |
+| whole machine | 23.4 W | **19.8 W** (−15.4 %) |
+
+Roughly **+18 % battery runtime under sustained load**, at the same speed.
+
+### The setting, and why it is that one
+
+**−100 mV on core and cache**, together. Core and cache share a rail on this part
+and the delivered voltage follows the *higher* of the two requests, so moving one
+alone does almost nothing and an asymmetric pair silently delivers the smaller
+offset. They always move together.
+
+| offset | standing |
+|---|---|
+| **−100 mV** | **179 660 verified answers** over 2 h on AC and 45 min on battery, zero mismatches |
+| −120 mV | one unexplained display artifact, never reproduced — [not attestable](FIRMWARE.md) |
+| −140 mV | hard hang, frozen with the display lit |
+
+### `uvsoak` — earning the number
+
+Uptime is not stability. The failure that matters is a wrong answer, so
+`uvsoak.sh` checks answers:
+
+```bash
+sudo ./uvsoak.sh                    # 2h at -120 mV on AC
+sudo ./uvsoak.sh 7200 -100          # 2h at -100 mV
+sudo ./uvsoak.sh 2700 -100 battery  # battery leg, stops at 30% combined charge
+sudo ./uvsoak.sh 600 0              # control run, no offset applied
+```
+
+Four workloads run concurrently, each with a known answer compared bit-for-bit:
+a SHA-256 chain, 2048-bit modular exponentiation, an AVX2 matmul through
+single-threaded BLAS, and a 64 MB DRAM buffer per worker hashed whole every
+round. The last one exists because the first three all verify values living in
+registers and L1 — nothing was watching a path that reaches memory until it was
+added.
+
+Four phases cycle throughout, because undervolts do not fail uniformly: all-core
+saturation, single-thread turbo bursts with idle gaps, a deep-idle dwell, and
+partial load. The bursts and the idle exits are where these fail first.
+
+References are computed at 0 mV **before** the offset goes on, recomputed at 0 mV
+**after** it comes off, and written into the log header as constants any machine
+can reproduce. It aborts on a mismatch, a new machine-check bank, 99 °C, or a
+drifted offset, and clears the offset on every exit path. Every line is fsynced,
+so if the machine dies the last line on disk is the last thing that was true.
+
+Logs land in `/var/log/uvsoak/`.
+
+### Making it persistent
+
+Use `intel-undervolt` from the distro. This repo deliberately does not install a
+unit of its own for this:
+
+```bash
+sudo pacman -S intel-undervolt
+sudoedit /etc/intel-undervolt.conf     # enable yes; undervolt 0 and 2 only
+sudo intel-undervolt apply
+sudo systemctl enable --now intel-undervolt.service
+```
+
+Enable `intel-undervolt.service`, **not** `intel-undervolt-loop.service`. The
+loop daemon re-applies every five seconds, and continuous mailbox polling is one
+of the unresolved suspects behind the −120 mV artifact. Nothing needs it.
+
+### Suspend wipes it — measured, not assumed
+
+S3 drops the voltage-offset mailbox entirely. Both planes read `−99.61 mV` going
+into a lid close and **come back at zero**; `intel-undervolt.service` restores
+them a fraction of a second later only because it is hooked to `suspend.target`.
+
+The naive test cannot see this — anything that re-applies on resume has already
+run by the time you look, so "survived" and "was restored" produce an identical
+reading. Proving it took a probe ordered `Before=intel-undervolt.service`.
+
+Two consequences. It **fails safe**: a machine that loses the re-apply resumes at
+stock voltage rather than resuming undervolted into something unvalidated. And an
+unmanaged undervolt is **not persistent in any sense** — every suspend discards
+it, so anyone measuring after a lid close without a re-apply unit is measuring a
+stock machine and may not know it.
+
+### Removing it
+
+```bash
+sudo systemctl disable --now intel-undervolt.service
+sudo reboot
+```
+
+Nothing persists in hardware. The offsets live in the mailbox until power is
+lost, so a reboot alone returns all five planes to 0.00 mV.
+
+### The full evidence
+
+Every measurement, every failed hypothesis and every correction is in
+[`FIRMWARE.md`](FIRMWARE.md) — including the shared-rail discovery, the −140 mV
+hang, and the −120 mV artifact that has never been explained. The BIOS side,
+which is research rather than procedure, is in [`BIOS-MOD.md`](BIOS-MOD.md).
 
 ## Safety
 
@@ -886,6 +1068,31 @@ sudo rm -f /etc/thinkpad-power-unlock.conf
 ```
 
 ## Changelog
+
+### Unreleased
+
+**Added**
+
+- `uvsoak.sh` — a soak harness that verifies *answers* rather than uptime, for
+  qualifying a CPU voltage offset. Four concurrent known-answer workloads
+  (SHA-256 chain, 2048-bit modular exponentiation, AVX2 matmul, and a 64 MB DRAM
+  buffer hashed whole), four load phases on a repeating cycle, references
+  computed at 0 mV before and after the run, and every log line fsynced so a
+  hang leaves the last true state on disk. See [Undervolting](#undervolting).
+- [`BIOS-MOD.md`](BIOS-MOD.md) — what hidden BIOS settings are on a T480, which
+  EFI setup stores are runtime-writable, and what the public research does and
+  does not establish. Research, not a procedure; nothing in it has been written
+  to a machine.
+
+**Documented**
+
+- An [Undervolting](#undervolting) section: −100 mV on core and cache as the
+  offset this hardware has evidence for, what it buys on AC and on battery, and
+  the two offsets that failed. Core and cache share a rail and must move
+  together.
+- Suspend drops the voltage-offset mailbox entirely — measured with a probe
+  ordered ahead of the re-apply, since "survived S3" and "was restored on
+  resume" otherwise read identically.
 
 ### 1.3.1
 
