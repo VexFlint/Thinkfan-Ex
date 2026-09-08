@@ -3,9 +3,13 @@
 # conservatively and reprograms at every boot.
 #
 # Resume is covered too (the unit is WantedBy=suspend.target), and it earns its
-# place: suspending an *idle* T480 leaves both limits untouched, but a machine
-# suspended under load came back at the firmware defaults, and this unit put them
-# right 0.5s later. Idle resume needs nothing; loaded resume does.
+# place: firmware reverts the limits at resume and this unit puts them right
+# ~0.3s later. That repair is exactly why idle resumes used to look clean -- the
+# unit had already fixed them before anything read the registers. Measured with
+# it taken out of the suspend path: an idle resume on battery reverted both TCC
+# and MMIO PL1, and an idle resume on AC reverted PL1 while sparing TCC. Idle
+# resume needs this unit too. See "The AC resume revert is partial" in
+# FIRMWARE.md.
 #
 # With --watch the script stays resident and puts the limits back the moment the
 # firmware takes them, which it does intermittently under load (see the README).
