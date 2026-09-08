@@ -28,6 +28,7 @@ file is about.
 | [The two routes](#the-two-routes) | Writing the variable, or reflashing the image |
 | [The IFR dump](#the-ifr-dump-done) | **Done.** What the firmware actually contains |
 | [What it found](#what-it-found) | The Intel Advanced Menu, with offsets |
+| [What else is hidden](#what-else-is-hidden) | The other 2,700 settings, and which are reachable |
 | [Is any of this worth wanting?](#is-any-of-this-worth-wanting) | The honest answer for this repo's purposes |
 
 ## The distinction that matters
@@ -222,6 +223,92 @@ Lock set, OC Lock clear.
 > that consumes them at boot is untested and untestable without writing. A
 > populated form is evidence the setting was compiled in, not evidence it is
 > wired up.
+
+## What else is hidden
+
+The power settings are a small corner of it. **2,809 settings across 124 forms,
+of which 2,123 sit inside a `SuppressIf` or `GrayOutIf` block** — the full
+inventory is in [`FIRMWARES/form-inventory.txt`](FIRMWARES/form-inventory.txt),
+the annotated pick in
+[`FIRMWARES/notable-settings.txt`](FIRMWARES/notable-settings.txt).
+
+The largest forms are mostly plumbing nobody wants — 24 identical *PCI Express
+Root Port* forms at 36 settings each, *Link options* (168), *SATA And RST*
+(97), *Control Logic options* (128). The interesting part is elsewhere.
+
+### Reachability is the first filter
+
+A setting is only writable from Linux if its varstore exists as a live EFI
+variable. The IFR distinguishes `VarStoreEfi` from plain `VarStore`, and that
+prediction is imperfect, so it was checked against the machine:
+
+| varstore | IFR declares | on this machine |
+|---|---|---|
+| `Setup` | `0x5EB` | **1515 B** ✓ |
+| `CpuSetup` | `0x306` | **774 B** ✓ |
+| `SaSetup` | `0x30C` | **780 B** ✓ |
+| `PchSetup` | `0x75F` | **1887 B** ✓ |
+| `SetupCpuFeatures` | `0x29` | **41 B** ✓ (despite being a plain `VarStore`) |
+| `MeSetup` | `0x141` | **absent** — declared `VarStoreEfi`, no variable exists |
+| `MeSetupStorage` | — | absent (plain `VarStore`, an internal buffer) |
+
+Four for four on sizes. **2,517 of the 2,601 settings that name a varstore — 96 %
+— live in a store that is present and runtime-writable.**
+
+**The 4 % that is not reachable is the most sensitive 4 %.** Everything in
+`MeSetup` and `MeSetupStorage` — *ME State*, *Local FW Update*, *Me FW Image
+Re-Flash*, *ME Unconfig on RTC Clear*, *TPM 1.2 Deactivate* — has no EFI
+variable behind it here. Whatever one thinks about disabling the Management
+Engine, **it is not on the table by this route on this machine.**
+
+### What the machine actually reports
+
+Read-only, from the live variables at the offsets the IFR gives:
+
+| setting | varstore + offset | value | reading |
+|---|---|---|---|
+| Debug Interface | `CpuSetup 0xED` | **0** | CPU debug disabled |
+| Debug Interface Lock | `CpuSetup 0xEE` | **1** | and locked — as a production part should be |
+| BIOS Lock | `PchSetup 0x17` | **1** | flash write protection on; this is *why* software flashing fails and a programmer is needed |
+| Flash Wear Out Protection | `CpuSetup 0xF0` | 0 | |
+| VMX Virtualization | `CpuSetup 0xCD` | 1 | on |
+| VT-d | `SaSetup 0xE3` | 1 | on |
+| DVMT Pre-Allocated | `SaSetup 0xDF` | 1 | |
+| DVMT Total Gfx Mem | `SaSetup 0xE0` | 2 | |
+| **Acoustic Noise Mitigation** | `CpuSetup 0x1CC` | **1** | **enabled** |
+| **Slow Slew Rate for IA Domain** | `CpuSetup 0x1D0` | **3** | slowest setting |
+| Maximum Memory Frequency | `SaSetup 0x10F` | 0 | auto |
+| SA GV | `SaSetup 0x12B` | 3 | |
+
+The debug rows are quiet good news: this machine's CPU debug interface is off
+*and* locked, which is the configuration you want and not one you can take for
+granted. `BIOS Lock = 1` independently confirms what the two-routes table above
+asserts — the flash is write-protected in hardware policy, so the reflash route
+really does need an external programmer.
+
+### The one that is this repo's business
+
+**`Acoustic Noise Mitigation` is enabled, and the IA slew rate is set to its
+slowest value.** That is a deliberate trade: the voltage regulator is made to
+ramp slowly so the inductors do not sing, at the cost of transient response when
+load steps. On a machine whose entire repo is about refusing the acoustics-first
+defaults, that is the most on-topic thing in the dump — Lenovo made the same
+class of choice in the VR that they made in the fan curve.
+
+It is *not* an action item. It is hidden behind the same unreachable-menu
+problem as everything else, the write route is the unrecoverable one, and
+nothing here measures what it costs. It is filed as the most interesting lead
+the dump produced, and left alone.
+
+### Also present, for the record
+
+*Memory / DRAM*: 71 settings including `tCL`, `tRCD/tRP`, `Maximum Memory
+Frequency`, `SA GV`, `Rank Margin Tool` — DRAM timing control on a laptop whose
+menu offers none. *Graphics*: `DVMT Pre-Allocated`, `DVMT Total Gfx Mem`, `LCD
+Panel Type`, `Panel Color Depth`. *Debug*: `TraceHub Enable Mode`, `JTAG C10
+Power`. *Thunderbolt*: a complete 47-setting form on a machine with no
+Thunderbolt port, which is a good reminder that a populated form proves the code
+was compiled in and nothing more.
 
 ## Is any of this worth wanting?
 
