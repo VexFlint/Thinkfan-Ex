@@ -6,10 +6,12 @@
 # place: firmware reverts the limits at resume and this unit puts them right
 # ~0.3s later. That repair is exactly why idle resumes used to look clean -- the
 # unit had already fixed them before anything read the registers. Measured with
-# it taken out of the suspend path: an idle resume on battery reverted both TCC
-# and MMIO PL1, and an idle resume on AC reverted PL1 while sparing TCC. Idle
-# resume needs this unit too. See "The AC resume revert is partial" in
-# FIRMWARE.md.
+# it taken out of the suspend path, at 1 Hz across the transition: every
+# instrumented resume -- AC or battery, idle or loaded -- reverts MMIO PL1 to
+# 15 W and latches odvp0 to 7. The TCC offset is usually spared (held at 4 in
+# five of six captures; one battery idle resume took it to 30 and has not
+# repeated). Idle resume needs this unit too. See "The battery/AC asymmetry does
+# not survive a second battery arm" in FIRMWARE.md.
 #
 # With --watch the script stays resident and puts the limits back the moment the
 # firmware takes them, which it does intermittently under load (see the README).
