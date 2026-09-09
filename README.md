@@ -816,22 +816,25 @@ Three ways the limits could be lost, and what each actually does on a T480
 |---|---|---|
 | **Reboot** | Holds | Unit runs at boot; `TCC 4 / PL1 22 W` live in sysfs afterwards |
 | **Sustained load** | Usually | Clean in nine of ten valid 300 s runs on AC; the other reverted at t=12 s. See the claw-back note above |
-| **Suspend / resume** | Depends on power source | On AC, idle: 75 s S3 with the unit no-op'd, both limits came back untouched. On battery: reverted to firmware defaults on resume, both when loaded and when idle — see `FIRMWARE.md` |
+| **Suspend / resume** | Partial revert, both power sources | Every instrumented resume drops MMIO PL1 to 15 W and latches `odvp0` to 7 — AC or battery, idle or loaded. The kernel replays the pre-suspend PL1 ~1 s later, so sysfs reads 22 W either way. TCC held at 4 in five of six captures; the one that took TCC has not repeated — see `FIRMWARE.md` |
 
 The load run is also the positive control that the limits are doing something:
 package power sits at **21.9 W sustained** against the 22 W PL1, and the throttle
 reason flips from `PL1` to `thermal` exactly as the package reaches **96 C** —
 the TCC offset 4 trip point, engaging where predicted.
 
-The resume result depends on what the machine was doing. `thinkpad-power-unlock.service`
+The revert fires on every resume, not only under load. `thinkpad-power-unlock.service`
 is `WantedBy=suspend.target`, so it re-runs on every wake — the unit's
 `InvocationID` changes, which is how you tell a genuine re-run from a value that
-was simply never disturbed. Suspend an **idle** machine with the unit deliberately
-disabled and the firmware leaves both limits alone. Suspend one **under load** and
-they come back at the firmware defaults; the unit then restores them within half a
-second, which is visible in `burnboth.sh` as a `LIMITS CHANGED` pair 0.5 s apart
-straddling the sleep. So the hook does nothing on an idle resume and real work on
-a loaded one.
+was simply never disturbed. Take the unit out of the suspend path and sample
+across the transition and you catch firmware dropping MMIO PL1 to 15 W and
+setting `odvp0` to 7 in the first post-resume second, idle or loaded, on AC or
+battery. What made idle resumes *look* clean before was timing: the unit — or,
+for PL1, an `intel_rapl_common` PM notifier the kernel runs unconditionally —
+put the value back within ~1 s, before anything read it. The TCC offset is the
+part that usually is left alone: it held at 4 across five of six instrumented
+resumes. Full write-up, including the one battery capture where TCC did move,
+in `FIRMWARE.md`.
 
 > If you re-test this yourself, suspend with **`systemctl suspend`**, not
 > `rtcwake -m mem`. `rtcwake` writes straight to `/sys/power/state`, which never

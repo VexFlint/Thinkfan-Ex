@@ -622,12 +622,17 @@ The practical consequence stands and is sharpened: **sysfs cannot tell you
 whether MMIO PL1 was reverted at resume**, because the kernel will have replayed
 whatever you last wrote, ~1 s later, whatever firmware did in between.
 
-Two consequences. **Firmware reverts both registers at resume**, symmetrically,
-and the asymmetric end state is Linux's doing rather than a firmware quirk. And
-**reading MMIO PL1 from sysfs after a resume cannot tell you whether it was
-reverted** — it will read 22 W either way, a couple of seconds later. Any past
-or future "PL1 survived the resume" conclusion drawn that way is void; only a
-sampler running across the transition, or the watchdog's own log, can see it.
+Two consequences. **In this capture firmware reverted both registers**, and the
+PL1 half of the end state — 22 W back a couple of seconds later — is Linux's
+doing rather than a firmware quirk. (The "both registers" part is specific to
+this run: five later resumes reverted only MMIO PL1 and left TCC at 4 — see "The
+battery/AC asymmetry does not survive a second battery arm" below. The kernel-
+replay finding is unaffected, since it is about the PL1 restore, which every
+resume shows.) And **reading MMIO PL1 from sysfs after a resume cannot tell you
+whether it was reverted** — it will read 22 W either way, a couple of seconds
+later. Any past or future "PL1 survived the resume" conclusion drawn that way is
+void; only a sampler running across the transition, or the watchdog's own log,
+can see it.
 
 **`MSR_SMI_COUNT` resets across S3, so it is not an instrument for resume.** It
 read 3154 before the suspend and restarted afterwards, reaching 373 by the end of
@@ -635,13 +640,14 @@ the run — hence the negative `SMI` column, which is a delta against a
 pre-suspend baseline that no longer exists. Question 11 leans on this counter;
 that lean is valid within a boot and void across a sleep.
 
-**Refined 2026-09-08 across four resume captures — the post-resume count is not
+**Refined 2026-09-08 across five resume captures — the post-resume count is not
 arbitrary, it is ~371 every time.** The `SMI` column is `count − count at run
 start`, so its sign says more about when the run was armed than about the sleep:
 
 | capture | count at run start | `SMI` at end | post-resume absolute |
 |---|---|---|---|
-| battery, idle | 3154 | −2769 | ~385 |
+| battery, idle (run 1) | 3154 | −2769 | ~385 |
+| battery, idle (run 2) | 2925 | −2548 | ~377 |
 | AC, idle (run 1) | 2923 | −2552 | ~371 |
 | AC, idle (run 2) | 373 | −2 | ~371 |
 | AC, 19 W PL1 | 371 | 0 | 371 |
@@ -676,7 +682,9 @@ One controlled pair was still missing when this was written. Both resume reverts
 on record — this one and the unattended one above — were idle **and** drawing
 from the pack, so "resume reverts" rested on two events sharing a power state.
 That pair has since been run, and the answer is below: on AC the resume revert
-fires but spares the TCC offset.
+fires but spares the TCC offset — and a later, clean battery arm ("The
+battery/AC asymmetry does not survive a second battery arm") does the same, so
+the split is not by power source.
 
 ### The AC resume revert is partial — PL1 moves, TCC does not (2026-09-08)
 
@@ -700,10 +708,16 @@ the pack full, so the machine was adapter-fed.
 
 | arm | odvp0 at start | S3 dwell | TCC | mmio PL1 | odvp0 after |
 |---|---|---|---|---|---|
-| battery, idle | 0 | 12m15s | **4 → 30**, stays 30 | 22 → 15 → 22 | 7 |
+| battery, idle (run 1) | 0 | 12m15s | **4 → 30**, stays 30 | 22 → 15 → 22 | 7 |
+| battery, idle (run 2) | **0** | ~2m50s | **4, never moved** (563/563) | 22 → 15 → 22 | 7 |
 | AC, idle (run 1) | 0 | 8s | **4, never moved** | 22 → 15 → 22 | 7 |
 | AC, idle (run 2) | 7 | 8m27s | **4, never moved** | 22 → 15 → 22 | 7 |
 | AC, idle (run 3) | **0** | 7m45s | **4, never moved** | 22 → 15 → 22 | 7 |
+
+Run 2 above is the second battery arm the rest of this section calls for; it is
+written up in full below and it **overturns the asymmetry**. The four rows that
+hold TCC at 4 are now three AC arms plus a clean battery arm, against the single
+run-1 capture where TCC moved.
 
 ```
    t   PkgW  MHz   C  TCC   mmioPL1  msrPL1  SMI  cThr  limiter
@@ -756,8 +770,14 @@ policy variable does not gate the revert mechanism — for it to explain the TCC
 hold it would have to suppress the TCC write selectively while leaving the PL1
 write intact, which nothing in this record proposes.
 
-**What is still owed is a second battery resume, and it needs a reboot** — `odvp0`
-is spent at 7 on this boot.
+**The second battery resume has now been run, and it removes the asymmetry** —
+see "The battery/AC asymmetry does not survive a second battery arm" below. On a
+clean battery arm (fresh boot, `odvp0 = 0`, `force-discharge`) the firmware
+reverted MMIO PL1 to 15 W and latched `odvp0` to 7 while the TCC offset held at 4
+for all 563 samples — the same partial revert the AC arms show. "Battery takes
+TCC, AC does not" was one capture per arm on the register that matters, and the
+battery capture is the one that did not repeat. **The rest of this subsection is
+left as written but its conclusion is superseded by that run.**
 
 **The battery arm is n=1.** This asymmetry rests on four AC idle resumes — three
 run as TCC arms, plus the 19 W PL1 test — against a single battery capture with a
@@ -782,6 +802,58 @@ reverted both registers, and both AC runs are idle resumes that reverted PL1. Th
 comment predates the removal of the repairer from the suspend path, which is
 almost certainly why idle resumes looked clean: the unit put the limits back
 0.3 s later. Corrected in the script.
+
+### The battery/AC asymmetry does not survive a second battery arm (2026-09-08)
+
+The n=1 the section above kept flagging, now run. Fresh boot (`uptime` 1 min),
+`odvp0 = 0` confirmed, TCC 4, MMIO PL1 22 W, `BAT0` on `force-discharge` with the
+adapter physically attached — matching battery run 1, so the only variable
+against the AC arms is the power source the firmware sees. `power-unlock` cleared
+from `suspend.target.wants` pre-reboot (boot path intact, runtime graph verified
+empty of it), watch unit inactive. `clawwatch.py --no-load` at 1 Hz across the
+transition. S3 entry 21:02:58, resume 21:05:48 — `PM: suspend entry (deep)` in
+the journal.
+
+Three state changes in the whole capture, all in the first two post-resume
+samples:
+
+```
+### t=35s  pl1: 22000000  ->  15000000
+### t=35s  odvp: 0,0,0,...  ->  7,0,0,...
+### t=36s  pl1: 15000000  ->  22000000
+# end: TCC=4 MMIO_PL1=22000000   odvp0..19 = 7,0,0,...
+# 3 STATE CHANGES
+```
+
+**The firmware acted, and it did not take TCC.** MMIO PL1 was caught at 15 W in
+the first post-resume sample and `odvp0` latched 0 → 7 — firmware demonstrably
+moved, so this is a capture and not a null. The MSR copy held 25.00 W throughout.
+And the TCC offset read **4 in every one of the 563 samples**, start to end. This
+is the same partial revert the four AC arms show; the prediction on record —
+TCC 4 → 30, stays 30 — failed.
+
+**The short dwell does not rescue the prediction.** The machine was woken at
+~2m50s, well under battery run 1's 12m15s. But the firmware completed its resume
+action — PL1 dip, `odvp0` latch — within 5 s of resume, and TCC was then sampled
+at 1 Hz for a further **566 s (t=35 → t=601, ~9.4 min) with no move**. On AC run 3
+the same logic retired the 8 s objection: dwell adequacy is established by the
+firmware visibly acting, not by the clock, and here it acted while TCC held
+straight through it. The long side is covered by the 19 W PL1 test's 14m41s.
+
+**So the resume revert is partial on both power sources.** Battery run 1 —
+TCC 4 → 30, the single per-row capture the asymmetry rested on — is the outlier.
+Five of six instrumented resumes (two battery, three AC, plus the 19 W PL1 test)
+revert MMIO PL1 and latch `odvp0` while leaving the TCC offset at 4. Power source
+is not what decides whether TCC moves at resume; nothing in this record now says
+it is.
+
+**What run 1 was, then, is unresolved.** It is a real capture with a per-row
+TCC reading of 30 that stayed 30, not an artifact of sampling. Either something
+about that specific run — the 12m15s dwell, some transient state — provoked the
+TCC write that five other resumes did not, or it is a low-rate event on a trigger
+that mostly spares TCC. One more battery resume at a matched (12m+) dwell would
+say which; it is no longer on the critical path, since the asymmetry it would
+have supported is withdrawn either way.
 
 ### Eight cold-start trials on AC, none reverted (2026-09-08)
 
@@ -1729,8 +1801,10 @@ boot. Question 2 being answered does not make the witness reusable within a boot
    eight cold-start 120 s load runs from odvp0=0 all ended at odvp0=0, at up to
    33.6 W and 92 C. Firmware did invoke it **at resume**, where odvp0 went 0 → 7
    in the same sample as the register revert. So the answer is "not under load,
-   yes across a sleep", on three resume captures that started from `odvp0 = 0`
-   (the battery arm, and AC runs 1 and 3) against eight load runs. What remains
+   yes across a sleep", on four resume captures that started from `odvp0 = 0`
+   (battery runs 1 and 2, AC runs 1 and 3) against eight load runs. The latch
+   fires even when TCC does not move: battery run 2 and AC runs 1 and 3 latched
+   `odvp0` to 7 with the TCC offset holding at 4 throughout. What remains
    open is whether a load-triggered revert — the rarer event these eight did not
    catch — also moves it; odvp0 cannot be reused for that within this boot, since
    the latch is now spent until a reboot.
@@ -1738,7 +1812,10 @@ boot. Question 2 being answered does not make the witness reusable within a boot
    it on every run.
 5. **Why does forced DPTF land TCC at 3 when the wild claw-back lands it at 30?**
    Same register, same subsystem, different value. Until that is explained the
-   DPTF path is a strong candidate rather than the identified cause.
+   DPTF path is a strong candidate rather than the identified cause. Note the
+   resume path barely bears on this: five of six instrumented resumes leave TCC
+   at 4, so the one resume that landed it at 30 (battery run 1) is an outlier,
+   not a clean second instance of the wild "30".
 5b. ~~Why does the PL1 clamp need a second enable cycle?~~ **Withdrawn
    2026-09-08 — it does not.** The clamp lands within 1 s of the *disable*
    (`DYTC(0x01FF)`), not on any enable. The question was an artifact of sampling
@@ -1759,12 +1836,15 @@ boot. Question 2 being answered does not make the witness reusable within a boot
    is now a reproduced trigger** — a controlled, idle, `--no-load` suspend with
    every repairer removed reverted both registers on the first post-resume
    sample (2026-09-08), the second resume revert on record and the first
-   instrumented one. Three AC resumes fired as well but **partially**: MMIO PL1
-   reverted and `odvp0` latched while the TCC offset held at 4, so resume
-   triggers on both power sources and the power source decides which registers
-   move. The third of those is the clean arm — its own fresh boot, `odvp0 = 0` at
-   entry, every precondition held — so the partial-revert finding no longer rests
-   on two runs that were each defective in a different way. The cold-fan hypothesis should now be treated as dead
+   instrumented one. Five more resumes fired as well but **partially**: three AC
+   arms, the 19 W PL1 test, and a clean second battery arm all reverted MMIO PL1
+   and latched `odvp0` while the TCC offset held at 4. So resume triggers on both
+   power sources, it mostly spares TCC, and **power source is not what decides
+   which registers move** — the one capture that took TCC (battery run 1) is the
+   outlier, on n=1 against n=5. Two of the partial arms are clean — AC run 3 and
+   battery run 2, each its own fresh boot with `odvp0 = 0` at entry and every
+   precondition held — so the partial-revert finding does not rest on defective
+   runs. The cold-fan hypothesis should now be treated as dead
    rather than merely unreproduced: eight cold-start trials with the fan stopped
    at onset, at up to 33.6 W and 92 C — hotter and harder than the run that
    reverted — produced nothing. Battery state, temperature, peak power, fan
